@@ -509,7 +509,7 @@
   function captureVideoStreamOnce(video) {
     const capture = video.captureStream || video.mozCaptureStream;
     if (!capture) {
-      throw new Error("This Chrome build cannot capture the YouTube video element.");
+      throw new Error("This Chrome build cannot capture the page's video element.");
     }
     const stream = capture.call(video);
     return stream;
@@ -533,7 +533,7 @@
       await delay(300);
     }
 
-    throw new Error("YouTube audio is not ready yet. Press play, then start Sotto again.");
+    throw new Error("Video audio is not ready yet. Press play, then start Sotto again.");
   }
 
   function closeSession(session, { stopStream = true } = {}) {
@@ -734,7 +734,7 @@
       }
 
       const video = document.querySelector("video");
-      if (!video) throw new Error("No YouTube video element was found.");
+      if (!video) throw new Error("No video element was found on this page.");
       const stream =
         isHandover && previousSession?.stream?.active
           ? previousSession.stream

@@ -574,8 +574,10 @@ function snapshot() {
   };
 }
 
+const SUPPORTED_HOST_PATTERN = /^https:\/\/([^/]+\.)?(youtube\.com|xiaohongshu\.com|xhslink\.com|bilibili\.com|douyin\.com|tiktok\.com|twitter\.com|x\.com|vimeo\.com|twitch\.tv|weibo\.com)\//i;
+
 function supportedUrl(url = "") {
-  return /^https:\/\/([^/]+\.)?youtube\.com\//i.test(url);
+  return SUPPORTED_HOST_PATTERN.test(url);
 }
 
 function tabMessage(tabId, message) {
@@ -602,10 +604,32 @@ async function firstSupportedTab() {
   const currentWindowMatch = currentWindowTabs.find((tab) => supportedUrl(tab.url));
   if (currentWindowMatch?.id) return currentWindowMatch;
 
-  const youtubeTabs = await chrome.tabs.query({
-    url: ["https://*.youtube.com/*", "https://youtube.com/*"]
+  const supportedTabs = await chrome.tabs.query({
+    url: [
+      "https://*.youtube.com/*",
+      "https://youtube.com/*",
+      "https://*.xiaohongshu.com/*",
+      "https://xiaohongshu.com/*",
+      "https://*.xhslink.com/*",
+      "https://*.bilibili.com/*",
+      "https://bilibili.com/*",
+      "https://*.douyin.com/*",
+      "https://douyin.com/*",
+      "https://*.tiktok.com/*",
+      "https://tiktok.com/*",
+      "https://*.twitter.com/*",
+      "https://twitter.com/*",
+      "https://*.x.com/*",
+      "https://x.com/*",
+      "https://*.vimeo.com/*",
+      "https://vimeo.com/*",
+      "https://*.twitch.tv/*",
+      "https://twitch.tv/*",
+      "https://*.weibo.com/*",
+      "https://weibo.com/*"
+    ]
   });
-  return youtubeTabs.find((tab) => supportedUrl(tab.url)) || null;
+  return supportedTabs.find((tab) => supportedUrl(tab.url)) || null;
 }
 
 async function sessionTab() {
@@ -625,7 +649,7 @@ async function resolveStartTab(preferredTab) {
   if (active?.id && supportedUrl(active.url)) return active;
   const supportedTab = await firstSupportedTab();
   if (supportedTab?.id) return supportedTab;
-  throw new Error("Open a YouTube tab before starting live translation.");
+  throw new Error("Open a supported video tab (YouTube, Xiaohongshu, Bilibili, Douyin, TikTok, X, Vimeo, Twitch, Weibo) before starting live translation.");
 }
 
 async function ensureContentScript(tabId) {
@@ -684,7 +708,7 @@ async function startTranslation(settings, preferredTab) {
       requestedTranslationVoice: settings?.translationVoice || null
     });
     if (!supportedUrl(tab.url)) {
-      throw new Error("Open a YouTube tab before starting live translation.");
+      throw new Error("Open a supported video tab (YouTube, Xiaohongshu, Bilibili, Douyin, TikTok, X, Vimeo, Twitch, Weibo) before starting live translation.");
     }
 
     const nextSettings = cleanSettings(settings);
