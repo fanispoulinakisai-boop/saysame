@@ -90,7 +90,21 @@
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.45),
     0 2px 6px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
+  /* NOTE: do NOT add overflow:hidden here — the settings panel
+     uses bottom:100% to render above the panel and would be clipped. */
+}
+
+/* Apply rounded corners + clipping to the inner content rather than
+   the panel itself, so the settings popover can extend above. */
+.lt-strip,
+.lt-captions {
+  border-radius: 14px;
+}
+.lt-root.is-active .lt-strip {
+  border-radius: 14px 14px 0 0;
+}
+.lt-root.is-active .lt-captions {
+  border-radius: 0 0 14px 14px;
 }
 
 .lt-root.is-translucent .lt-panel {
