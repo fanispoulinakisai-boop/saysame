@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Sotto Live Interpreter",
-  "description": "Hear live video translation with spoken audio and captions.",
+  "name": "SaySame Live Interpreter",
+  "description": "Live translate any video with translated voice or cheap text mode.",
   "version": "0.2.0",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "scripting", "storage"],
@@ -38,7 +38,7 @@
     "128": "assets/icons/icon-128.png"
   },
   "action": {
-    "default_title": "Sotto",
+    "default_title": "SaySame",
     "default_icon": {
       "16": "assets/icons/icon-16.png",
       "32": "assets/icons/icon-32.png",
@@ -53,6 +53,12 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://api.openai.com http://127.0.0.1:8799 http://localhost:8799;"
   },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/icons/brand-mark-64.png", "assets/icons/icon-128.png"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [
@@ -78,7 +84,7 @@
         "https://*.weibo.com/*",
         "https://weibo.com/*"
       ],
-      "js": ["content.js"],
+      "js": ["text-mode.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

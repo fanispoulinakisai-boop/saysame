@@ -4,6 +4,10 @@ const DEFAULT_SETTINGS = {
   openaiOrganization: "",
   openaiBaseUrl: "https://api.openai.com/v1",
   translationModel: "gpt-realtime-translate",
+  // Text mode (cheap pipeline) models. Whisper for streaming
+  // transcription + a small chat model for the translation pass.
+  transcriptionModel: "gpt-realtime-whisper",
+  textTranslationModel: "gpt-4o-mini",
   backendUrl: "http://127.0.0.1:8799",
   bridgeToken: "",
   sourceLanguage: "auto",
@@ -211,6 +215,235 @@ async function openDirectTranslationSdp({ offerSdp, settings }) {
   };
 }
 
+// ===========================================================
+// Text-mode pipeline (cheap):
+//   1. Streaming transcription via gpt-realtime-whisper (WebRTC,
+//      same SDP shape as the translate flow but with a transcription
+//      session config).
+//   2. Per-segment translation via gpt-4o-mini chat completions.
+//
+// Voice-mode machinery above is left untouched — text-mode just
+// branches around it.
+// ===========================================================
+
+function buildTranscriptionSessionConfig(settings = {}) {
+  const { sourceLanguage } = normalizeTranslationLanguages(settings);
+  const transcriptionModel =
+    settings.transcriptionModel || DEFAULT_SETTINGS.transcriptionModel;
+  const transcription = { model: transcriptionModel };
+  // Only pass a language hint when the user picked a real source
+  // language; "auto" lets Whisper detect.
+  if (sourceLanguage && sourceLanguage !== "auto") {
+    transcription.language = sourceLanguage;
+  }
+  return {
+    type: "transcription",
+    audio: {
+      input: {
+        transcription,
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.5,
+          prefix_padding_ms: 300,
+          silence_duration_ms: 500
+        }
+      }
+    }
+  };
+}
+
+async function fetchTranscriptionClientSecret(settings) {
+  const nextSettings = cleanSettings(settings);
+  if (!nextSettings.openaiApiKey) {
+    throw new Error("Add your OpenAI API key in SaySame settings before starting.");
+  }
+  const baseUrl = nextSettings.openaiBaseUrl.replace(/\/$/, "");
+  const sessionConfig = buildTranscriptionSessionConfig(nextSettings);
+
+  let secretResponse;
+  try {
+    secretResponse = await fetch(`${baseUrl}/realtime/client_secrets`, {
+      method: "POST",
+      headers: openAIHeaders(nextSettings, {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      }),
+      body: JSON.stringify({ session: sessionConfig })
+    });
+  } catch {
+    throw new Error("Could not reach OpenAI to create a transcription session.");
+  }
+
+  const { text, payload } = await parseJsonResponse(secretResponse);
+  if (!secretResponse.ok) {
+    throw new Error(
+      payload.error?.message ||
+        payload.message ||
+        text ||
+        "Could not create an OpenAI transcription client secret."
+    );
+  }
+  // The Realtime ephemeral-secret response shape uses `value` for
+  // the secret (same as the translate endpoint).
+  const clientSecret =
+    payload?.value || payload?.client_secret?.value || payload?.client_secret;
+  if (!clientSecret) {
+    throw new Error("OpenAI transcription client secret response was incomplete.");
+  }
+
+  return {
+    clientSecret,
+    callsUrl: `${baseUrl}/realtime/calls`,
+    transcriptionModel: nextSettings.transcriptionModel,
+    clientSecretRequestId: secretResponse.headers.get("x-request-id")
+  };
+}
+
+async function openTranscriptionSdp({ offerSdp, settings }) {
+  if (!offerSdp || typeof offerSdp !== "string") {
+    throw new Error("Missing transcription SDP offer.");
+  }
+  const nextSettings = cleanSettings({ ...state, ...settings });
+  trace("text_mode.client_secret_requested", {
+    sourceLanguage: nextSettings.sourceLanguage,
+    targetLanguage: nextSettings.targetLanguage,
+    transcriptionModel: nextSettings.transcriptionModel,
+    offerChars: offerSdp.length
+  });
+
+  const secretPayload = await fetchTranscriptionClientSecret(nextSettings);
+  trace("text_mode.client_secret_ready", {
+    transcriptionModel: secretPayload.transcriptionModel,
+    clientSecretRequestId: secretPayload.clientSecretRequestId || null
+  });
+
+  let sdpResponse;
+  try {
+    sdpResponse = await fetch(secretPayload.callsUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${secretPayload.clientSecret}`,
+        "Content-Type": "application/sdp",
+        Accept: "application/sdp"
+      },
+      body: offerSdp
+    });
+  } catch (error) {
+    throw new Error(
+      error?.message || "Could not reach the realtime transcription endpoint."
+    );
+  }
+
+  const answerSdp = await sdpResponse.text();
+  trace("text_mode.sdp_answer", {
+    status: sdpResponse.status,
+    ok: sdpResponse.ok,
+    answerChars: answerSdp.length,
+    errorPreview: sdpResponse.ok ? null : answerSdp.slice(0, 700),
+    clientSecretRequestId: secretPayload.clientSecretRequestId || null
+  });
+
+  if (!sdpResponse.ok) {
+    let errorPayload = {};
+    try { errorPayload = answerSdp ? JSON.parse(answerSdp) : {}; } catch {}
+    throw new Error(
+      errorPayload.error?.message ||
+        errorPayload.message ||
+        answerSdp ||
+        "Could not open transcription session."
+    );
+  }
+
+  return {
+    answerSdp,
+    transcriptionModel: secretPayload.transcriptionModel,
+    clientSecretRequestId: secretPayload.clientSecretRequestId || null
+  };
+}
+
+async function translateTextSegment({
+  segment,
+  sourceLanguage,
+  targetLanguage,
+  settings
+}) {
+  const nextSettings = cleanSettings({ ...state, ...settings });
+  if (!nextSettings.openaiApiKey) {
+    throw new Error("Add your OpenAI API key in SaySame settings before starting.");
+  }
+  const trimmed = String(segment || "").trim();
+  if (!trimmed) {
+    return { translatedText: "" };
+  }
+
+  const baseUrl = nextSettings.openaiBaseUrl.replace(/\/$/, "");
+  const sourceName =
+    sourceLanguage && sourceLanguage !== "auto"
+      ? LANGUAGE_NAMES[sourceLanguage] || sourceLanguage
+      : "the detected source language";
+  const targetName =
+    LANGUAGE_NAMES[targetLanguage] ||
+    targetLanguage ||
+    LANGUAGE_NAMES[DEFAULT_SETTINGS.targetLanguage];
+  const model = nextSettings.textTranslationModel || DEFAULT_SETTINGS.textTranslationModel;
+
+  trace("text_mode.translate_request", {
+    model,
+    sourceLanguage: sourceLanguage || "auto",
+    targetLanguage,
+    segmentChars: trimmed.length
+  });
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: openAIHeaders(nextSettings, {
+        "Content-Type": "application/json",
+        Accept: "application/json"
+      }),
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a real-time translator for live video subtitles. Translate the user's input from " +
+              sourceName +
+              " into " +
+              targetName +
+              ". Output ONLY the translated sentence — no preamble, no quotes, no explanation. Keep it natural and concise."
+          },
+          { role: "user", content: trimmed }
+        ]
+      })
+    });
+  } catch {
+    throw new Error("Could not reach OpenAI to translate the segment.");
+  }
+
+  const { text, payload } = await parseJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      payload.error?.message ||
+        payload.message ||
+        text ||
+        "Translation request failed."
+    );
+  }
+  const translatedText =
+    payload?.choices?.[0]?.message?.content?.trim?.() || "";
+
+  trace("text_mode.translate_response", {
+    model,
+    targetLanguage,
+    translatedChars: translatedText.length
+  });
+
+  return { translatedText };
+}
+
 function clientSecretCacheKey(settings = {}) {
   const nextSettings = cleanSettings(settings);
   return [
@@ -289,7 +522,7 @@ async function parseJsonResponse(response) {
 async function fetchTranslationClientSecretFromExtension(settings, reason = "sdp") {
   const nextSettings = cleanSettings(settings);
   if (!nextSettings.openaiApiKey) {
-    throw new Error("Add your OpenAI API key in Sotto settings before starting.");
+    throw new Error("Add your OpenAI API key in SaySame settings before starting.");
   }
 
   const baseUrl = nextSettings.openaiBaseUrl.replace(/\/$/, "");
@@ -367,7 +600,7 @@ async function fetchTranslationClientSecretFromBridge(settings, reason = "sdp") 
     );
   } catch (error) {
     throw new Error(
-      `Sotto bridge is not reachable at ${backendUrl}. Start the local server, then try again.`
+      `SaySame bridge is not reachable at ${backendUrl}. Start the local server, then try again.`
     );
   }
   const secretText = await secretResponse.text();
@@ -501,6 +734,12 @@ function cleanSettings(settings = {}) {
     ).replace(/\/$/, ""),
     translationModel: String(
       settings.translationModel || DEFAULT_SETTINGS.translationModel
+    ).trim(),
+    transcriptionModel: String(
+      settings.transcriptionModel || DEFAULT_SETTINGS.transcriptionModel
+    ).trim(),
+    textTranslationModel: String(
+      settings.textTranslationModel || DEFAULT_SETTINGS.textTranslationModel
     ).trim(),
     backendUrl: String(settings.backendUrl || DEFAULT_SETTINGS.backendUrl).replace(/\/$/, ""),
     bridgeToken: String(settings.bridgeToken || "").trim(),
@@ -666,7 +905,7 @@ async function ensureContentScript(tabId) {
   });
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["content.js"]
+    files: ["text-mode.js", "content.js"]
   });
 }
 
@@ -718,7 +957,7 @@ async function startTranslation(settings, preferredTab) {
     state.running = false;
     state.connecting = true;
     state.tabId = tab.id;
-    state.status = "Starting Sotto";
+    state.status = "Starting SaySame";
     state.sourceText = "";
     state.targetText = "";
     state.history = [];
@@ -880,6 +1119,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     );
   }
 
+  if (message.type === "OPENAI_TRANSCRIPTION_SDP") {
+    trace("message.openai_transcription_sdp", {
+      senderTabId: sender.tab?.id || null,
+      senderUrl: sender.tab?.url || null,
+      offerChars: message.offerSdp?.length || 0
+    });
+    return replyWith(
+      openTranscriptionSdp({
+        offerSdp: message.offerSdp,
+        settings: message.settings
+      }),
+      sendResponse
+    );
+  }
+
+  if (message.type === "TRANSLATE_TEXT_SEGMENT") {
+    trace("message.translate_text_segment", {
+      senderTabId: sender.tab?.id || null,
+      senderUrl: sender.tab?.url || null,
+      sourceLanguage: message.sourceLanguage || null,
+      targetLanguage: message.targetLanguage || null,
+      segmentChars: message.segment?.length || 0
+    });
+    return replyWith(
+      translateTextSegment({
+        segment: message.segment,
+        sourceLanguage: message.sourceLanguage,
+        targetLanguage: message.targetLanguage,
+        settings: message.settings
+      }),
+      sendResponse
+    );
+  }
+
   if (message.type === "OPENAI_TRANSLATION_SDP") {
     trace("message.openai_translation_sdp", {
       senderTabId: sender.tab?.id || null,
@@ -930,7 +1203,7 @@ async function showUnsupportedNotice(tab) {
         const toast = document.createElement("div");
         toast.id = "__sotto-toast";
         toast.textContent =
-          "Sotto works on YouTube, Bilibili, TikTok, X, Vimeo, Twitch, Xiaohongshu, Douyin and Weibo. Open one of those to start.";
+          "SaySame works on YouTube, Bilibili, TikTok, X, Vimeo, Twitch, Xiaohongshu, Douyin and Weibo. Open one of those to start.";
         Object.assign(toast.style, {
           position: "fixed",
           left: "50%",

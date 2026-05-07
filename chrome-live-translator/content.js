@@ -87,9 +87,16 @@
     { id: "verse", name: "Verse" }
   ];
 
-  // Cost: $0.034 per minute of realtime translation.
-  const COST_PER_MINUTE = 0.034;
+  // Per-minute cost by mode.
+  //   voice: gpt-realtime-translate ≈ $0.034/min (per OpenAI pricing)
+  //   text:  gpt-realtime-whisper (~$0.017/min) + gpt-4o-mini per
+  //          finalized segment (rough total ≈ $0.02/min)
+  const COST_PER_MINUTE_VOICE = 0.034;
+  const COST_PER_MINUTE_TEXT = 0.02;
   const COST_WARN_THRESHOLD = 5.0;
+  function costPerMinute() {
+    return mode === "text" ? COST_PER_MINUTE_TEXT : COST_PER_MINUTE_VOICE;
+  }
 
   // ===========================================================
   // State
@@ -100,6 +107,7 @@
   let currentState = {};
   let overlayVisible = false;
   let pageSession;
+  let textSession;
   let pageToken = 0;
   let currentTargetText = "";
   let previousFinalizedTarget = "";
@@ -197,7 +205,8 @@
       body: JSON.stringify({
         source: "content",
         type,
-        running: Boolean(pageSession),
+        running: Boolean(pageSession || textSession),
+        mode,
         targetLanguage: activeDisplayLanguage(),
         requestedTargetLanguage:
           requestedTargetLanguage || elements?.languageSelect?.value || null,
@@ -216,7 +225,7 @@
       ...fallbackState(),
       ...currentState,
       ...overlaySettings(),
-      running: Boolean(pageSession),
+      running: Boolean(pageSession || textSession),
       connecting: false,
       status,
       sourceText: trimDisplay(currentSourceText, 220),
@@ -415,7 +424,7 @@
       lastStream.getTracks().forEach((track) => track.stop());
       await delay(300);
     }
-    throw new Error("Video audio is not ready yet. Press play, then start Sotto again.");
+    throw new Error("Video audio is not ready yet. Press play, then start SaySame again.");
   }
 
   function closeSession(session, { stopStream = true } = {}) {
@@ -594,6 +603,152 @@
         targetText: "",
         sourceText: ""
       });
+    }
+  }
+
+  // ===========================================================
+  // Text mode (cheap pipeline) — uses window.__sottoTextMode
+  // (see text-mode.js). Whisper streams the source transcript;
+  // background translates each finalized segment via gpt-4o-mini.
+  // No voice playback.
+  // ===========================================================
+  async function stopTextModeTranslation(reason = "user_stop", shouldRender = false) {
+    trace("text_mode.session.stop", { reason });
+    const session = textSession;
+    textSession = undefined;
+    sessionStartedAt = 0;
+    stopTickerTimer();
+    isStreaming = false;
+    previousFinalizedTarget = "";
+    currentTargetText = "";
+    currentSourceText = "";
+    try {
+      window.__sottoTextMode?.stop?.(reason);
+    } catch (error) {
+      trace("text_mode.session.stop_error", {
+        errorMessage: error?.message || null
+      });
+    }
+    if (session?.stream) {
+      session.stream.getTracks().forEach((track) => track.stop());
+    }
+
+    if (shouldRender) {
+      render({
+        ...currentState,
+        running: false,
+        connecting: false,
+        status: "Stopped",
+        targetText: "",
+        sourceText: ""
+      });
+    } else if (overlayVisible && !isHidden) {
+      render({
+        ...currentState,
+        running: false,
+        connecting: false,
+        status: "Ready",
+        targetText: "",
+        sourceText: ""
+      });
+    }
+  }
+
+  async function startTextModeTranslation(settings = {}) {
+    if (!window.__sottoTextMode?.start) {
+      throw new Error("Text mode module is not loaded.");
+    }
+    const sessionSettings = { ...overlaySettings(), ...settings };
+    createOverlay();
+    overlayVisible = true;
+    isHidden = false;
+    root.hidden = false;
+    currentState = { ...currentState, ...sessionSettings };
+    syncRequestedControlsFromState(currentState);
+
+    if (textSession) return liveSnapshot("Live Translator (text)");
+
+    currentTargetText = "";
+    currentSourceText = "";
+    previousFinalizedTarget = "";
+    render(liveSnapshot("Capturing video audio", {
+      running: false,
+      connecting: true,
+      targetText: ""
+    }));
+
+    const video = document.querySelector("video");
+    if (!video) throw new Error("No video element was found on this page.");
+    const stream = await capturedVideoStream(video);
+    applyAudioMix(sessionSettings, { remote: false });
+
+    // Mark session up-front so a quick double-Start can't open two
+    // peer connections.
+    textSession = { stream, settings: sessionSettings };
+
+    try {
+      await window.__sottoTextMode.start({
+        stream,
+        settings: sessionSettings,
+        sendRuntimeMessage,
+        onStatus: (status) => {
+          if (!textSession) return;
+          notifyLive(status);
+        },
+        onPartialSource: (text) => {
+          if (!textSession) return;
+          currentSourceText = text;
+          notifyLive("Live Translator (text)");
+        },
+        onFinalSource: (text) => {
+          if (!textSession) return;
+          currentSourceText = text;
+          notifyLive("Live Translator (text)");
+        },
+        onPartialTarget: (text) => {
+          if (!textSession) return;
+          currentTargetText = text;
+          isStreaming = true;
+          notifyLive("Live Translator (text)");
+        },
+        onFinalTarget: (text /*, meta */) => {
+          if (!textSession) return;
+          if (currentTargetText) previousFinalizedTarget = currentTargetText;
+          currentTargetText = text;
+          isStreaming = false;
+          notifyLive("Live Translator (text)");
+        },
+        onError: (error) => {
+          trace("text_mode.session.error", {
+            errorMessage: error?.message || null
+          });
+          if (textSession) notifyLive(error?.message || "Translation error");
+        },
+        onClosed: (reason) => {
+          trace("text_mode.session.closed", { reason });
+        }
+      });
+
+      sessionStartedAt = Date.now();
+      startTickerTimer();
+      const snapshot = liveSnapshot("Live Translator (text)");
+      notifyLive("Live Translator (text)");
+      return snapshot;
+    } catch (error) {
+      trace("text_mode.session.start_error", {
+        errorMessage: error?.message || "Could not start text translation."
+      });
+      await stopTextModeTranslation("start_error", false);
+      render({
+        ...currentState,
+        ...overlaySettings(),
+        running: false,
+        connecting: false,
+        status: error?.message || "Could not start text translation.",
+        targetText: "",
+        sourceText: ""
+      });
+      throw error;
     }
   }
 
@@ -830,7 +985,7 @@
   function updateTicker() {
     if (!sessionStartedAt || !elements.tickerTime) return;
     const elapsedSec = Math.max(0, (Date.now() - sessionStartedAt) / 1000);
-    const cost = (elapsedSec / 60) * COST_PER_MINUTE;
+    const cost = (elapsedSec / 60) * costPerMinute();
     elements.tickerTime.textContent = formatTickerTime(elapsedSec);
     elements.tickerAmount.textContent = formatCost(cost);
     elements.ticker.classList.toggle("is-warn", cost >= COST_WARN_THRESHOLD);
@@ -857,22 +1012,17 @@
 
   function currentCost() {
     if (!sessionStartedAt) return 0;
-    return ((Date.now() - sessionStartedAt) / 1000 / 60) * COST_PER_MINUTE;
+    return ((Date.now() - sessionStartedAt) / 1000 / 60) * costPerMinute();
   }
 
   // ===========================================================
   // Overlay creation
   // ===========================================================
   function brandMarkSvg() {
+    const src = chrome.runtime.getURL("assets/icons/brand-mark-64.png");
     return `
       <span class="lt-mark" aria-hidden="true">
-        <svg viewBox="0 0 64 64" focusable="false">
-          <rect width="64" height="64" rx="15" fill="#D6FF3D"></rect>
-          <path d="M43 17H25.5C18.8 17 14 21 14 26.7C14 32.3 18.5 36 25.3 36H38.7C45.5 36 50 39.7 50 45.3C50 51 45.2 55 38.5 55H18" fill="none" stroke="#0B0C0A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M21 25.5H32.5" fill="none" stroke="#0B0C0A" stroke-width="3.5" stroke-linecap="round" opacity="0.82"></path>
-          <path d="M31.5 45H43" fill="none" stroke="#0B0C0A" stroke-width="3.5" stroke-linecap="round" opacity="0.82"></path>
-          <circle cx="47" cy="17" r="4" fill="#0B0C0A"></circle>
-        </svg>
+        <img src="${src}" width="28" height="28" alt="" />
       </span>
     `;
   }
@@ -939,7 +1089,7 @@
     root = document.createElement("aside");
     root.className = "lt-root is-idle";
     root.setAttribute("role", "region");
-    root.setAttribute("aria-label", "Sotto live translator");
+    root.setAttribute("aria-label", "SaySame live translator");
 
     // Restore saved bar position if present
     try {
@@ -976,8 +1126,8 @@
             <div class="lt-settings-row">
               <span class="lt-settings-label">Default mode</span>
               <select class="lt-input" data-lt-default-mode>
-                <option value="voice">Voice (realtime audio)</option>
-                <option value="text">Text (coming soon)</option>
+                <option value="voice">Voice (realtime audio · ~$0.034/min)</option>
+                <option value="text">Text (captions only · ~$0.02/min)</option>
               </select>
             </div>
             <div class="lt-settings-row">
@@ -1022,7 +1172,7 @@
         <div class="lt-strip" data-lt-drag-handle>
           <div class="lt-brand lt-no-drag">
             ${brandMarkSvg()}
-            <span class="lt-wordmark">Sotto</span>
+            <span class="lt-wordmark">SaySame</span>
             <span class="lt-live" aria-label="Live">
               <span class="lt-live-dot"></span>
               <span>Live</span>
@@ -1150,7 +1300,7 @@
     pill = document.createElement("button");
     pill.type = "button";
     pill.className = "lt-pill";
-    pill.setAttribute("aria-label", "Show Sotto bar");
+    pill.setAttribute("aria-label", "Show SaySame bar");
     pill.innerHTML = `
       <span class="lt-pill-icon">${playSvg()}</span>
       <span class="lt-pill-amount" data-lt-pill-amount>$0.00</span>
@@ -1295,23 +1445,18 @@
       { capture: true }
     );
 
-    // Mode toggle
+    // Mode toggle (voice ↔ text). Switching while a session is
+    // running is intentionally not supported — user must Stop first.
     elements.modeSegments.forEach((segment) => {
       segment.addEventListener("click", () => {
         const next = segment.dataset.segment;
         if (next === mode) return;
-        if (next === "text") {
-          // PHASE 3: cheap text mode pipeline hook
-          // For now, show the "coming soon" tooltip and revert to Voice.
-          showTooltip(segment, "Coming soon");
+        if (next !== "voice" && next !== "text") return;
+        if (pageSession || textSession) {
+          showTooltip(segment, "Stop translation first");
           return;
         }
-        mode = next;
-        elements.mode.dataset.mode = mode;
-        elements.modeSegments.forEach((s) => {
-          s.setAttribute("aria-selected", String(s.dataset.segment === mode));
-        });
-        elements.voiceWrap.classList.toggle("is-disabled", mode === "text");
+        setMode(next);
         void persistOverlaySettings();
       });
     });
@@ -1355,9 +1500,10 @@
     elements.startBtn.addEventListener("click", async () => {
       elements.startBtn.disabled = true;
       try {
+        const settings = { ...selectedOverlaySettings(), mode };
         const response = await sendRuntimeMessage({
           type: "START_TRANSLATION",
-          settings: selectedOverlaySettings()
+          settings
         });
         if (!response?.ok) {
           throw new Error(response?.error || "Could not start live translation.");
@@ -1444,16 +1590,13 @@
     // Settings: defaults
     elements.defaultMode.addEventListener("change", () => {
       const next = elements.defaultMode.value;
-      if (next === "text") {
-        showTooltip(elements.defaultMode, "Coming soon");
-        elements.defaultMode.value = "voice";
+      if (next !== "voice" && next !== "text") return;
+      if (pageSession || textSession) {
+        showTooltip(elements.defaultMode, "Stop translation first");
+        elements.defaultMode.value = mode;
         return;
       }
-      mode = next;
-      elements.mode.dataset.mode = mode;
-      elements.modeSegments.forEach((s) => {
-        s.setAttribute("aria-selected", String(s.dataset.segment === mode));
-      });
+      setMode(next);
       void persistOverlaySettings();
     });
     elements.defaultVoice.addEventListener("change", () => {
@@ -1553,6 +1696,21 @@
     root.classList.remove("is-settings-open");
   }
 
+  function setMode(next) {
+    if (next !== "voice" && next !== "text") return;
+    mode = next;
+    if (elements.mode) {
+      elements.mode.dataset.mode = mode;
+      elements.modeSegments.forEach((s) => {
+        s.setAttribute("aria-selected", String(s.dataset.segment === mode));
+      });
+    }
+    // Voice picker is irrelevant in text mode — gray it out so users
+    // don't think their voice choice is doing anything.
+    elements.voiceWrap?.classList.toggle("is-disabled", mode === "text");
+    if (elements.defaultMode) elements.defaultMode.value = mode;
+  }
+
   function setOpacity(value) {
     barOpacity = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
     elements.opacitySlider.value = String(barOpacity);
@@ -1587,9 +1745,18 @@
   }
 
   async function handleStop() {
-    if (!pageSession && !currentState.running && !currentState.connecting) return;
+    if (
+      !pageSession &&
+      !textSession &&
+      !currentState.running &&
+      !currentState.connecting
+    ) return;
     try {
-      await stopPageTranslation("overlay_stop", false);
+      if (textSession) {
+        await stopTextModeTranslation("overlay_stop", false);
+      } else {
+        await stopPageTranslation("overlay_stop", false);
+      }
       const response = await sendRuntimeMessage({ type: "STOP_TRANSLATION" }).catch(
         () => null
       );
@@ -1617,7 +1784,9 @@
       root.hidden = false;
     }
 
-    const isActive = Boolean(state.running || state.connecting || pageSession);
+    const isActive = Boolean(
+      state.running || state.connecting || pageSession || textSession
+    );
     root.classList.toggle("is-active", isActive);
     root.classList.toggle("is-idle", !isActive);
     root.classList.toggle("is-connecting", Boolean(state.connecting));
@@ -1661,7 +1830,9 @@
     if (!current && !previous) {
       elements.captionPrev.textContent = "";
       elements.captionCurrent.textContent =
-        state.connecting ? "Listening..." : (pageSession ? "Listening..." : "");
+        state.connecting
+          ? "Listening..."
+          : (pageSession || textSession ? "Listening..." : "");
       elements.captionCurrent.classList.remove("is-streaming");
       return;
     }
@@ -1684,8 +1855,7 @@
     const stored = await chrome.storage.local.get(null);
     if (stored && typeof stored === "object") {
       currentState = { ...fallbackState(), ...stored };
-      mode = stored.mode === "text" ? "voice" : (stored.mode || "voice");
-      // PHASE 3: when text mode pipeline lands, restore stored.mode directly.
+      mode = stored.mode === "text" ? "text" : "voice";
       barOpacity = Number.isFinite(Number(stored.barOpacity))
         ? Number(stored.barOpacity)
         : 100;
@@ -1759,7 +1929,15 @@
     if (message?.type === "CONTENT_START_PAGE_TRANSLATION") {
       (async () => {
         try {
-          const state = await startPageTranslation(message.settings || {});
+          const requestedMode =
+            message.settings?.mode === "text" ? "text" : "voice";
+          // Sync the local mode state with whatever the popup/bar
+          // requested so caption render + cost ticker reflect it.
+          if (requestedMode !== mode) setMode(requestedMode);
+          const state =
+            requestedMode === "text"
+              ? await startTextModeTranslation(message.settings || {})
+              : await startPageTranslation(message.settings || {});
           sendResponse({ ok: true, state });
         } catch (error) {
           sendResponse({
@@ -1857,7 +2035,11 @@
       message?.type === "CONTENT_STOP" ||
       message?.type === "CONTENT_STOP_PAGE_TRANSLATION"
     ) {
-      void stopPageTranslation("background_stop", false);
+      if (textSession) {
+        void stopTextModeTranslation("background_stop", false);
+      } else {
+        void stopPageTranslation("background_stop", false);
+      }
       sendResponse({ ok: true });
       return false;
     }
