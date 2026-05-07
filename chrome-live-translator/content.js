@@ -9,6 +9,7 @@
   // ===========================================================
   const LANGUAGE_OPTIONS = [
     { code: "en", name: "English", common: true },
+    { code: "el", name: "Greek", common: true },
     { code: "es", name: "Spanish", common: true },
     { code: "fr", name: "French", common: true },
     { code: "de", name: "German", common: true },
@@ -28,7 +29,6 @@
     { code: "cs", name: "Czech" },
     { code: "cy", name: "Welsh" },
     { code: "da", name: "Danish" },
-    { code: "el", name: "Greek" },
     { code: "et", name: "Estonian" },
     { code: "fa", name: "Persian" },
     { code: "fi", name: "Finnish" },
@@ -1198,7 +1198,7 @@
       targetText: "",
       backendUrl: "http://127.0.0.1:8799",
       sourceLanguage: "auto",
-      targetLanguage: "de",
+      targetLanguage: "en",
       translationVoice: "marin",
       translationMode: "sync",
       originalVolume: 18,

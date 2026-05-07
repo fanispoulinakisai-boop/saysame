@@ -7,7 +7,7 @@ const DEFAULT_SETTINGS = {
   backendUrl: "http://127.0.0.1:8799",
   bridgeToken: "",
   sourceLanguage: "auto",
-  targetLanguage: "de",
+  targetLanguage: "en",
   translationVoice: "marin",
   translationMode: "sync",
   originalVolume: 18,
