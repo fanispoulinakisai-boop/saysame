@@ -1098,23 +1098,39 @@
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", "SaySame live translator");
 
-    // Restore saved bar position if present
+    // Restore saved bar position + size if present
     try {
-      void chrome.storage.local.get(["barPosition"]).then((stored) => {
+      void chrome.storage.local.get(["barPosition", "barSize"]).then((stored) => {
+        if (!root) return;
         const pos = stored?.barPosition;
-        if (!root || !pos || typeof pos.left !== "number" || typeof pos.top !== "number") return;
-        const margin = 8;
-        const left = Math.max(margin, Math.min(window.innerWidth - 100, pos.left));
-        const top = Math.max(margin, Math.min(window.innerHeight - 60, pos.top));
-        root.style.left = `${left}px`;
-        root.style.top = `${top}px`;
-        root.style.right = "auto";
-        root.style.bottom = "auto";
-        root.style.transform = "none";
+        if (pos && typeof pos.left === "number" && typeof pos.top === "number") {
+          const margin = 8;
+          const left = Math.max(margin, Math.min(window.innerWidth - 100, pos.left));
+          const top = Math.max(margin, Math.min(window.innerHeight - 60, pos.top));
+          root.style.left = `${left}px`;
+          root.style.top = `${top}px`;
+          root.style.right = "auto";
+          root.style.bottom = "auto";
+          root.style.transform = "none";
+        }
+        const sz = stored?.barSize;
+        if (sz) {
+          if (typeof sz.width === "number") {
+            const w = Math.max(320, Math.min(window.innerWidth - 16, sz.width));
+            root.style.setProperty("--lt-bar-width", `${w}px`);
+          }
+          if (typeof sz.captionsHeight === "number") {
+            const h = Math.max(60, Math.min(window.innerHeight * 0.5, sz.captionsHeight));
+            root.style.setProperty("--lt-captions-min-height", `${h}px`);
+          }
+        }
       }).catch(() => {});
     } catch {}
     root.innerHTML = `
       <div class="lt-panel">
+        <span class="lt-resize-handle lt-resize-handle-w" data-lt-resize="w" aria-hidden="true"></span>
+        <span class="lt-resize-handle lt-resize-handle-e" data-lt-resize="e" aria-hidden="true"></span>
+        <span class="lt-resize-handle lt-resize-handle-s" data-lt-resize="s" aria-hidden="true"></span>
         <div class="lt-settings" data-lt-settings>
           <div class="lt-settings-header">
             <span class="lt-settings-title">Settings</span>
@@ -1775,6 +1791,65 @@
     };
     elements.strip.addEventListener("pointerup", endDrag);
     elements.strip.addEventListener("pointercancel", endDrag);
+
+    // Resize handles: drag left/right edges to change width, bottom
+    // edge to change captions area height.
+    let resizeState = null;
+    root.querySelectorAll("[data-lt-resize]").forEach((handle) => {
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        const rect = root.getBoundingClientRect();
+        const captionsRect = elements.captions?.getBoundingClientRect();
+        resizeState = {
+          mode: handle.dataset.ltResize,
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          originLeft: rect.left,
+          originRight: rect.right,
+          originWidth: rect.width,
+          originCaptionsHeight: captionsRect?.height || 96
+        };
+        try { handle.setPointerCapture(event.pointerId); } catch {}
+        root.classList.add("is-resizing");
+        event.preventDefault();
+        event.stopPropagation();
+      });
+      handle.addEventListener("pointermove", (event) => {
+        if (!resizeState || event.pointerId !== resizeState.pointerId) return;
+        if (resizeState.mode === "e") {
+          const dx = event.clientX - resizeState.startX;
+          const w = Math.max(320, Math.min(window.innerWidth - 16, resizeState.originWidth + dx * 2));
+          root.style.setProperty("--lt-bar-width", `${w}px`);
+        } else if (resizeState.mode === "w") {
+          const dx = event.clientX - resizeState.startX;
+          const w = Math.max(320, Math.min(window.innerWidth - 16, resizeState.originWidth - dx * 2));
+          root.style.setProperty("--lt-bar-width", `${w}px`);
+        } else if (resizeState.mode === "s") {
+          const dy = event.clientY - resizeState.startY;
+          const h = Math.max(60, Math.min(window.innerHeight * 0.5, resizeState.originCaptionsHeight + dy));
+          root.style.setProperty("--lt-captions-min-height", `${h}px`);
+        }
+      });
+      const endResize = (event) => {
+        if (!resizeState || event.pointerId !== resizeState.pointerId) return;
+        try { handle.releasePointerCapture(event.pointerId); } catch {}
+        const widthPx = parseFloat(root.style.getPropertyValue("--lt-bar-width")) || null;
+        const heightPx = parseFloat(root.style.getPropertyValue("--lt-captions-min-height")) || null;
+        resizeState = null;
+        root.classList.remove("is-resizing");
+        try {
+          void chrome.storage.local.set({
+            barSize: {
+              width: widthPx,
+              captionsHeight: heightPx
+            }
+          });
+        } catch {}
+      };
+      handle.addEventListener("pointerup", endResize);
+      handle.addEventListener("pointercancel", endResize);
+    });
   }
 
   function toggleSettings() {

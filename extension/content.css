@@ -30,14 +30,19 @@
   /* Bar tunables */
   --lt-bar-opacity: 1;
   --lt-caption-size: 32px;
+  /* Default bar width — overridden by resize handle / chrome.storage. */
+  --lt-bar-width: 880px;
+  /* Captions area min-height — controls how many caption lines are
+     visible by default. Overridden by bottom resize handle. */
+  --lt-captions-min-height: 96px;
 
   position: fixed;
   z-index: 2147483647;
   left: 50%;
   bottom: 96px;
   transform: translateX(-50%);
-  width: calc(100vw - 32px);
-  max-width: 880px;
+  width: min(calc(100vw - 32px), var(--lt-bar-width));
+  max-width: 95vw;
   color: var(--text-primary);
   font-family:
     -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue",
@@ -498,8 +503,11 @@
   display: none;
   border-top: 1px solid var(--border-subtle);
   padding: var(--sp-2xl) var(--sp-xl) var(--sp-xl);
-  min-height: 96px;
-  max-height: 28vh;
+  /* min-height drives the visible-line count; user can drag the
+     bottom edge to grow/shrink. max-height clamps so it never
+     covers the whole viewport. */
+  min-height: var(--lt-captions-min-height);
+  max-height: max(var(--lt-captions-min-height), 50vh);
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--surface-2-strong) transparent;
@@ -512,7 +520,53 @@
 
 @keyframes lt-captions-in {
   from { max-height: 0; opacity: 0; }
-  to { max-height: 28vh; opacity: 1; }
+  to { max-height: max(var(--lt-captions-min-height), 50vh); opacity: 1; }
+}
+
+/* ===========================================================
+   Resize handles (left/right edges = width, bottom edge = captions
+   height). Hit-targets are larger than visible bars so they're easy
+   to grab. Bottom handle only appears when the bar is active (only
+   then is there a caption area to resize). Disable during drag so
+   pointer events don't fight the move drag.
+   =========================================================== */
+.lt-resize-handle {
+  position: absolute;
+  z-index: 4;
+  background: transparent;
+  touch-action: none;
+}
+
+.lt-resize-handle-w,
+.lt-resize-handle-e {
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.lt-resize-handle-w { left: -2px; }
+.lt-resize-handle-e { right: -2px; }
+
+.lt-resize-handle-s {
+  display: none;
+  left: 8px;
+  right: 8px;
+  bottom: -2px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.lt-root.is-active .lt-resize-handle-s {
+  display: block;
+}
+
+.lt-root.is-resizing {
+  user-select: none;
+}
+
+.lt-root.is-resizing .lt-strip {
+  cursor: inherit;
 }
 
 .lt-captions-inner {

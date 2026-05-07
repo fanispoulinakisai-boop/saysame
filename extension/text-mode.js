@@ -224,7 +224,10 @@
               ? parsed.delta.slice(0, 80)
               : (typeof parsed.transcript === "string"
                   ? parsed.transcript.slice(0, 80)
-                  : null)
+                  : null),
+            errorMessage: parsed.error?.message || null,
+            errorCode: parsed.error?.code || null,
+            errorType: parsed.error?.type || null
           });
           if (existing.length > 200) existing.shift();
           root.dataset.sottoTextEvents = JSON.stringify(existing);
