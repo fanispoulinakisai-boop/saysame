@@ -1391,18 +1391,21 @@
     });
 
     // Gear — open / close settings
+    console.log("[Sotto] Gear button bound:", elements.gearBtn);
     elements.gearBtn.addEventListener("click", (event) => {
+      console.log("[Sotto] Gear clicked. settingsOpen was:", settingsOpen);
       event.stopPropagation();
       event.preventDefault();
       toggleSettings();
+      const computed = getComputedStyle(elements.settings).display;
+      console.log("[Sotto] After toggle. settingsOpen now:", settingsOpen, "| root.classList:", root.className, "| settings display:", computed);
     });
     elements.settingsClose.addEventListener("click", (event) => {
       event.stopPropagation();
       closeSettings();
     });
 
-    // Click outside settings closes it (use mousedown so it runs before
-    // the gear's click handler can re-open if user clicks the gear again)
+    // Click outside settings closes it
     document.addEventListener("mousedown", (event) => {
       if (!settingsOpen) return;
       if (event.target.closest(".lt-settings, [data-lt-gear]")) return;
