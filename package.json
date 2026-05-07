@@ -1,5 +1,5 @@
 {
-  "name": "live-yt-translator",
+  "name": "saysame",
   "version": "0.1.0",
   "description": "A Chrome extension for live YouTube translation with OpenAI Realtime.",
   "type": "module",
