@@ -1,0 +1,36 @@
+{
+  "name": "live-yt-translator",
+  "version": "0.1.0",
+  "description": "A Chrome extension for live YouTube translation with OpenAI Realtime.",
+  "type": "module",
+  "homepage": "https://github.com/petergpt/Live-YT-Translator#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/petergpt/Live-YT-Translator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/petergpt/Live-YT-Translator/issues"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "bridge:token": "node scripts/print-bridge-token.js",
+    "check:translation-model": "node scripts/check-translation-model.js",
+    "check:access": "node scripts/check-access.js",
+    "smoke:bridge": "node scripts/smoke-local-bridge.js",
+    "check:language-routing": "node scripts/check-language-routing.js",
+    "test": "npm run check:access && npm run check:language-routing && npm run smoke:bridge"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "youtube",
+    "chrome-extension",
+    "openai",
+    "realtime",
+    "translation",
+    "webrtc"
+  ],
+  "license": "MIT"
+}

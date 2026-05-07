@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f8fafc" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Interpreter" />
+    <title>Mirror Interpreter</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css?v=15" />
+  </head>
+  <body>
+    <main class="app-shell" aria-label="Mirror Interpreter">
+      <section class="recipient-panel" aria-label="Translation shown to the other person">
+        <button
+          class="orientation-button"
+          type="button"
+          data-action="toggle-recipient-orientation"
+          aria-label="Show companion panel facing you"
+          aria-pressed="false"
+          title="Face this side toward me"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"></path>
+            <path d="M21 3v6h-6"></path>
+          </svg>
+        </button>
+        <div class="rotated-content">
+          <div class="audio-status" data-speaking="false">
+            <span class="icon-button speaker-button" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M4 10v4h4l5 4V6L8 10H4Z"></path>
+                <path d="M16 9a4 4 0 0 1 0 6"></path>
+                <path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>
+              </svg>
+            </span>
+            <span class="speaking-label" data-out-status>Ready</span>
+            <div class="waveform" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+          </div>
+          <p class="translation-text" data-display-state="idle">
+            <span data-translation>Live translated voice will play here.</span>
+          </p>
+        </div>
+      </section>
+
+      <nav class="language-spine" aria-label="Language direction">
+        <button
+          class="language-chip"
+          type="button"
+          data-action="source-language"
+          aria-label="Change the language I speak"
+        >
+          <span class="chip-role">I speak</span>
+          <span class="chip-value" data-source-language-label>English</span>
+        </button>
+        <button class="swap-button" type="button" data-action="swap" aria-label="Swap languages">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 7h11l-3-3"></path>
+            <path d="M18 7l-3 3"></path>
+            <path d="M17 17H6l3 3"></path>
+            <path d="M6 17l3-3"></path>
+          </svg>
+        </button>
+        <button
+          class="language-chip"
+          type="button"
+          data-action="target-language"
+          aria-label="Change the language they hear"
+        >
+          <span class="chip-role">They hear</span>
+          <span class="chip-value" data-target-language-label>Spanish</span>
+        </button>
+      </nav>
+
+      <section class="holder-panel" aria-label="Your side of the conversation">
+        <div class="source-region">
+          <label class="source-label" for="sourceText">You say</label>
+          <textarea
+            id="sourceText"
+            class="source-text"
+            rows="3"
+            autocomplete="off"
+            autocorrect="on"
+            spellcheck="true"
+            data-source
+          >Your words will appear here.</textarea>
+        </div>
+
+        <div class="controls">
+          <button class="round-action" type="button" data-action="clear" aria-label="Clear transcript and translation">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"></path>
+              <path d="M4.5 4.5v5h5"></path>
+            </svg>
+            <span>Clear</span>
+          </button>
+
+          <button class="mic-button" type="button" data-action="mic" aria-label="Start live translation">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z"></path>
+              <path d="M19 11a7 7 0 0 1-14 0"></path>
+              <path d="M12 18v4"></path>
+              <path d="M8 22h8"></path>
+            </svg>
+            <span data-mic-label>Start</span>
+          </button>
+
+          <button class="round-action" type="button" data-action="pause-mic" aria-pressed="false" aria-label="Pause microphone">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M6 8a6 6 0 0 1 12 0v3"></path>
+              <path d="M18 16a6 6 0 0 1-12 0v-3"></path>
+              <path d="M12 2v3"></path>
+              <path d="M12 19v3"></path>
+            </svg>
+            <span data-pause-label>Pause</span>
+          </button>
+        </div>
+
+        <p class="status-line" data-status aria-live="polite"></p>
+      </section>
+    </main>
+
+    <template id="languageMenuTemplate">
+      <div class="language-menu" role="menu">
+        <button type="button" data-lang="en">English</button>
+        <button type="button" data-lang="sq">Albanian</button>
+        <button type="button" data-lang="es">Spanish</button>
+        <button type="button" data-lang="fr">French</button>
+        <button type="button" data-lang="de">German</button>
+        <button type="button" data-lang="it">Italian</button>
+        <button type="button" data-lang="ja">Japanese</button>
+        <button type="button" data-lang="ru">Russian</button>
+      </div>
+    </template>
+
+    <script type="module" src="/app.js?v=15"></script>
+  </body>
+</html>

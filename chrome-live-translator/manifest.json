@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Sotto Live Interpreter",
+  "description": "Hear live video translation with spoken audio and captions.",
+  "version": "0.1.26",
+  "minimum_chrome_version": "116",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8799/*",
+    "http://localhost:8799/*",
+    "https://api.openai.com/*",
+    "https://*.youtube.com/*",
+    "https://youtube.com/*"
+  ],
+  "icons": {
+    "16": "assets/icons/icon-16.png",
+    "32": "assets/icons/icon-32.png",
+    "48": "assets/icons/icon-48.png",
+    "128": "assets/icons/icon-128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sotto",
+    "default_icon": {
+      "16": "assets/icons/icon-16.png",
+      "32": "assets/icons/icon-32.png",
+      "48": "assets/icons/icon-48.png",
+      "128": "assets/icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src https://api.openai.com http://127.0.0.1:8799 http://localhost:8799;"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.youtube.com/*", "https://youtube.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

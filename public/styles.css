@@ -1,0 +1,666 @@
+:root {
+  color-scheme: light;
+  --bg: #f8fafc;
+  --ink: #07111f;
+  --muted: #647084;
+  --line: #d9dee8;
+  --accent: #0868f6;
+  --accent-soft: #e7f0ff;
+  --danger: #b42318;
+  --panel: #ffffff;
+  --shadow: 0 22px 70px rgba(15, 23, 42, 0.16);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display",
+    "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(8, 104, 246, 0.08), transparent 30%),
+    #e9edf4;
+  color: var(--ink);
+  display: grid;
+  min-height: 100svh;
+  place-items: center;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button {
+  border: 0;
+}
+
+.app-shell {
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 64px minmax(0, 1fr);
+  height: min(100svh, 920px);
+  max-height: 920px;
+  max-width: 430px;
+  min-height: 720px;
+  overflow: hidden;
+  position: relative;
+  width: min(100vw, 430px);
+}
+
+.recipient-panel,
+.holder-panel {
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.recipient-panel {
+  align-items: stretch;
+  display: grid;
+  gap: 8px;
+  grid-template-rows: 40px minmax(0, 1fr);
+  padding: max(12px, env(safe-area-inset-top)) 18px 22px;
+}
+
+.rotated-content {
+  display: grid;
+  gap: 18px;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  transform: rotate(180deg);
+  transform-origin: center;
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.recipient-panel.is-self-facing .rotated-content {
+  transform: rotate(0deg);
+}
+
+.orientation-button {
+  align-items: center;
+  align-self: start;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  height: 40px;
+  justify-content: center;
+  justify-self: end;
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    transform 180ms ease;
+  width: 40px;
+  z-index: 2;
+}
+
+.orientation-button:active {
+  transform: scale(0.96);
+}
+
+.orientation-button svg {
+  height: 21px;
+  stroke-width: 2.2;
+  transition: transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  width: 21px;
+}
+
+.recipient-panel.is-self-facing .orientation-button {
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+}
+
+.recipient-panel.is-self-facing .orientation-button svg {
+  transform: rotate(180deg);
+}
+
+.audio-status {
+  align-items: center;
+  color: var(--accent);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  justify-items: start;
+  min-width: 0;
+}
+
+.audio-status[data-phase="idle"] {
+  color: var(--muted);
+}
+
+.audio-status[data-phase="connecting"] .waveform span,
+.audio-status[data-phase="translating"] .waveform span {
+  animation: pulse-wave 980ms ease-in-out infinite;
+  opacity: 0.62;
+}
+
+.audio-status[data-phase="muted"] {
+  color: var(--muted);
+}
+
+.waveform {
+  align-items: center;
+  display: flex;
+  gap: 5px;
+  height: 42px;
+  justify-self: stretch;
+  overflow: hidden;
+}
+
+.waveform span {
+  background: currentColor;
+  border-radius: 99px;
+  display: block;
+  height: 10px;
+  opacity: 0.85;
+  width: 3px;
+}
+
+.waveform span:nth-child(2) {
+  height: 20px;
+}
+
+.waveform span:nth-child(3) {
+  height: 30px;
+}
+
+.waveform span:nth-child(4) {
+  height: 16px;
+}
+
+.waveform span:nth-child(5) {
+  height: 38px;
+}
+
+.waveform span:nth-child(6) {
+  height: 22px;
+}
+
+.waveform span:nth-child(7) {
+  height: 28px;
+}
+
+.waveform span:nth-child(8) {
+  height: 18px;
+}
+
+.waveform span:nth-child(9) {
+  height: 34px;
+}
+
+[data-speaking="true"] .waveform span {
+  animation: pulse-wave 760ms ease-in-out infinite;
+}
+
+[data-speaking="true"] .waveform span:nth-child(2n) {
+  animation-delay: 120ms;
+}
+
+[data-speaking="true"] .waveform span:nth-child(3n) {
+  animation-delay: 240ms;
+}
+
+@keyframes pulse-wave {
+  0%,
+  100% {
+    transform: scaleY(0.55);
+  }
+  50% {
+    transform: scaleY(1.25);
+  }
+}
+
+.speaking-label {
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.icon-button,
+.round-action,
+.swap-button,
+.language-chip,
+.mic-button {
+  align-items: center;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.speaker-button {
+  color: var(--accent);
+  cursor: default;
+  height: 44px;
+  width: 44px;
+}
+
+.speaker-button svg {
+  height: 34px;
+  width: 34px;
+}
+
+.translation-text[data-display-state="idle"] span,
+.translation-text[data-display-state="connecting"] span,
+.translation-text[data-display-state="listening"] span,
+.translation-text[data-display-state="muted"] span {
+  color: #1f2937;
+}
+
+.translation-text[data-held-turn="true"] span {
+  color: #0e1827;
+}
+
+.translation-text {
+  align-items: center;
+  color: var(--ink);
+  display: flex;
+  font-weight: 720;
+  justify-content: center;
+  letter-spacing: 0;
+  line-height: 1.04;
+  margin: 0;
+  min-height: 0;
+  overflow: hidden;
+  text-align: center;
+}
+
+.translation-text span {
+  display: block;
+  font-size: clamp(28px, 10.5vw, 48px);
+  line-height: 1.07;
+  max-height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+  transition:
+    color 180ms ease,
+    opacity 180ms ease;
+}
+
+.language-spine {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: 1fr 62px 1fr;
+  min-height: 64px;
+  z-index: 3;
+}
+
+.language-chip {
+  color: #0e1827;
+  display: grid;
+  grid-template-columns: minmax(0, auto) auto;
+  grid-template-rows: auto auto;
+  font-weight: 620;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 14px;
+  row-gap: 2px;
+}
+
+.language-chip::after {
+  border: solid currentColor;
+  border-width: 0 2px 2px 0;
+  content: "";
+  display: inline-block;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  height: 8px;
+  margin-left: 10px;
+  place-self: center;
+  transform: rotate(45deg) translateY(-3px);
+  width: 8px;
+}
+
+.chip-role,
+.chip-value {
+  grid-column: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-role {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1;
+}
+
+.chip-value {
+  color: #0e1827;
+  font-size: 19px;
+  line-height: 1.05;
+}
+
+.swap-button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
+  color: var(--ink);
+  height: 54px;
+  justify-self: center;
+  width: 54px;
+}
+
+.swap-button svg {
+  height: 30px;
+  width: 30px;
+}
+
+.holder-panel {
+  align-content: stretch;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  row-gap: 18px;
+  padding: 30px 24px max(22px, env(safe-area-inset-bottom));
+}
+
+.source-region {
+  align-items: center;
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.source-label {
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  display: block;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+.source-text {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: clamp(24px, 8.6vw, 38px);
+  font-weight: 720;
+  letter-spacing: 0;
+  line-height: 1.12;
+  margin: 0;
+  min-height: 0;
+  outline: 0;
+  overflow: hidden auto;
+  overflow-wrap: anywhere;
+  padding: 0;
+  resize: none;
+  text-align: center;
+  width: 100%;
+  word-break: normal;
+  transition: color 180ms ease;
+}
+
+.source-text::placeholder {
+  color: #9aa4b5;
+}
+
+.controls {
+  align-items: end;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(82px, 1fr) 124px minmax(82px, 1fr);
+  justify-items: center;
+  width: 100%;
+}
+
+.round-action {
+  color: var(--accent);
+  flex-direction: column;
+  gap: 9px;
+  max-width: 96px;
+  min-width: 76px;
+}
+
+.round-action svg {
+  background: #f1f5fb;
+  border-radius: 999px;
+  height: 58px;
+  padding: 16px;
+  width: 58px;
+}
+
+.round-action span,
+.mic-button span {
+  color: var(--muted);
+  font-size: 16px;
+  font-weight: 560;
+  line-height: 1.15;
+  max-width: 100px;
+  text-align: center;
+}
+
+.round-action[aria-pressed="true"] svg {
+  background: var(--accent-soft);
+}
+
+.round-action:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.mic-button {
+  background: transparent;
+  color: var(--accent);
+  display: grid;
+  gap: 14px;
+  height: auto;
+  margin-bottom: 0;
+  place-items: center;
+  position: relative;
+  width: 124px;
+}
+
+.mic-button svg {
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow:
+    0 0 0 14px var(--accent-soft),
+    0 18px 42px rgba(8, 104, 246, 0.22);
+  color: #ffffff;
+  height: 54px;
+  padding: 28px;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    background 180ms ease;
+  width: 54px;
+  box-sizing: content-box;
+}
+
+.mic-button span {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.mic-button.is-listening svg {
+  background: #004fc7;
+  box-shadow:
+    0 0 0 18px var(--accent-soft),
+    0 20px 52px rgba(8, 104, 246, 0.32);
+  transform: translateY(3px) scale(0.98);
+}
+
+.mic-button.is-connecting svg {
+  background: #0e1827;
+  box-shadow:
+    0 0 0 18px #e9edf4,
+    0 20px 52px rgba(15, 23, 42, 0.24);
+}
+
+.mic-button.is-muted svg {
+  background: #647084;
+  box-shadow:
+    0 0 0 18px #eef1f6,
+    0 20px 52px rgba(100, 112, 132, 0.24);
+}
+
+.status-line {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.3;
+  margin: 0;
+  min-height: 18px;
+  text-align: center;
+}
+
+.status-line.is-error {
+  color: var(--danger);
+}
+
+.language-menu {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 18px 54px rgba(15, 23, 42, 0.18);
+  display: grid;
+  gap: 2px;
+  left: 50%;
+  max-width: min(330px, calc(100vw - 40px));
+  padding: 8px;
+  position: fixed;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 260px;
+  z-index: 10;
+}
+
+.language-menu button {
+  background: transparent;
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 14px;
+  text-align: left;
+}
+
+.language-menu button:hover,
+.language-menu button:focus-visible {
+  background: #f1f5fb;
+  outline: 0;
+}
+
+@media (max-width: 480px) {
+  body {
+    background: var(--panel);
+    display: block;
+  }
+
+  .app-shell {
+    box-shadow: none;
+    height: 100svh;
+    max-height: none;
+    max-width: none;
+    min-height: 100svh;
+    width: 100vw;
+  }
+}
+
+@media (max-height: 760px) {
+  .app-shell {
+    min-height: 100svh;
+  }
+
+  .recipient-panel {
+    padding-bottom: 10px;
+    padding-top: 14px;
+  }
+
+  .translation-text {
+    line-height: 1.04;
+  }
+
+  .translation-text span {
+    font-size: clamp(24px, 9.8vw, 40px);
+  }
+
+  .source-text {
+    font-size: clamp(22px, 7.8vw, 32px);
+  }
+
+  .holder-panel {
+    padding-bottom: 12px;
+    padding-top: 20px;
+    row-gap: 14px;
+  }
+
+  .controls {
+    gap: 12px;
+    grid-template-columns: minmax(74px, 1fr) 96px minmax(74px, 1fr);
+  }
+
+  .mic-button {
+    gap: 8px;
+    width: 96px;
+  }
+
+  .mic-button svg {
+    height: 42px;
+    padding: 20px;
+    width: 42px;
+  }
+
+  .mic-button span {
+    font-size: 14px;
+  }
+
+  .round-action span {
+    font-size: 14px;
+  }
+
+  .status-line {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orientation-button,
+  .orientation-button svg,
+  .rotated-content,
+  .source-text,
+  .translation-text span {
+    transition: none;
+  }
+}

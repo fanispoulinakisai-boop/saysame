@@ -1,0 +1,256 @@
+:root {
+  color-scheme: dark;
+  font-family:
+    "Avenir Next", "SF Pro Display", ui-sans-serif, system-ui, -apple-system,
+    sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 420px;
+  margin: 0;
+  color: #f7f3ea;
+  background: #10110d;
+}
+
+.popup-shell {
+  display: grid;
+  gap: 13px;
+  min-height: 420px;
+  padding: 18px;
+  background:
+    linear-gradient(160deg, rgb(223 255 95 / 10%), transparent 44%),
+    #10110d;
+}
+
+.topline,
+.language-row,
+.mix-row,
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.secret-row {
+  display: grid;
+  gap: 7px;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  overflow: hidden;
+  box-shadow:
+    0 0 0 1px rgb(226 255 102 / 20%),
+    0 8px 20px rgb(0 0 0 / 22%);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.eyebrow {
+  margin: 0 0 2px;
+  color: rgb(247 243 234 / 48%);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 820;
+  letter-spacing: 0;
+}
+
+.status-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  background: rgb(247 243 234 / 22%);
+  box-shadow: 0 0 0 5px rgb(247 243 234 / 5%);
+}
+
+.status-dot[data-state="connecting"] {
+  background: #ffca64;
+  box-shadow: 0 0 0 5px rgb(255 202 100 / 12%);
+}
+
+.status-dot[data-state="live"] {
+  background: #e2ff66;
+  box-shadow: 0 0 0 5px rgb(226 255 102 / 14%);
+}
+
+label,
+.toggle-row span {
+  color: rgb(247 243 234 / 68%);
+  font-size: 12px;
+  font-weight: 680;
+  letter-spacing: 0;
+}
+
+select {
+  min-width: 190px;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #f7f3ea;
+  background: rgb(255 255 255 / 7%);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+select:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #e2ff66;
+  outline-offset: 2px;
+}
+
+.bridge-details {
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  padding-top: 10px;
+}
+
+.bridge-details summary {
+  cursor: pointer;
+  color: rgb(247 243 234 / 58%);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.secret-row input,
+.bridge-token input {
+  width: 100%;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: #f7f3ea;
+  background: rgb(255 255 255 / 7%);
+  font: inherit;
+  font-size: 12px;
+}
+
+.bridge-token {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.start-button {
+  width: 100%;
+  border: 0;
+  border-radius: 8px;
+  padding: 13px 16px;
+  color: #070808;
+  background: #e2ff66;
+  font: inherit;
+  font-size: 17px;
+  font-weight: 780;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+
+.start-button.is-live {
+  color: #f7f3ea;
+  background: rgb(255 255 255 / 10%);
+}
+
+.start-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.mix {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid rgb(255 255 255 / 10%);
+  padding-top: 14px;
+}
+
+.mix-row label {
+  width: 64px;
+}
+
+input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #e2ff66;
+}
+
+output {
+  width: 28px;
+  color: rgb(247 243 234 / 54%);
+  font-size: 12px;
+  text-align: right;
+}
+
+.toggle-row {
+  min-height: 34px;
+}
+
+input[type="checkbox"] {
+  width: 38px;
+  height: 22px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 999px;
+  margin: 0;
+  appearance: none;
+  background: rgb(255 255 255 / 10%);
+  cursor: pointer;
+  position: relative;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease;
+}
+
+input[type="checkbox"]::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: rgb(247 243 234 / 74%);
+  transition:
+    background 140ms ease,
+    transform 140ms ease;
+}
+
+input[type="checkbox"]:checked {
+  border-color: rgb(226 255 102 / 72%);
+  background: rgb(226 255 102 / 28%);
+}
+
+input[type="checkbox"]:checked::before {
+  background: #e2ff66;
+  transform: translateX(16px);
+}
+
+.status-line {
+  min-height: 18px;
+  margin: -2px 0 0;
+  color: rgb(247 243 234 / 52%);
+  font-size: 12px;
+  line-height: 1.35;
+}
