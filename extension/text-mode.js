@@ -194,6 +194,20 @@
         const parsed = safeJsonParse(event.data);
         if (!parsed) return;
 
+        // Surface every event type to a global ring buffer so the
+        // orchestrator can inspect what the model is sending. Cheap.
+        try {
+          window.__sottoTextModeEvents = window.__sottoTextModeEvents || [];
+          window.__sottoTextModeEvents.push({
+            ts: Date.now(),
+            type: parsed.type,
+            keys: Object.keys(parsed)
+          });
+          if (window.__sottoTextModeEvents.length > 200) {
+            window.__sottoTextModeEvents.shift();
+          }
+        } catch {}
+
         if (parsed.type === "error") {
           const message =
             parsed.error?.message ||
@@ -206,8 +220,6 @@
         if (isDeltaEvent(parsed.type)) {
           const text = readTranscriptText(parsed);
           if (!text) return;
-          // Whisper deltas are incremental. Accumulate until we see
-          // the finalized segment, then flush.
           session.partialBuffer = `${session.partialBuffer}${text}`;
           onPartialSource?.(session.partialBuffer);
           return;
@@ -219,7 +231,6 @@
           session.partialBuffer = "";
           if (!finalText.trim()) return;
           onFinalSource?.(finalText);
-          // Fire translation; result is delivered via onFinalTarget.
           void session.translate(finalText);
           return;
         }

@@ -1163,6 +1163,23 @@
           </div>
 
           <div class="lt-settings-section">
+            <div class="lt-settings-row">
+              <span class="lt-settings-label">Original video volume</span>
+              <div class="lt-slider-row">
+                <input class="lt-slider" type="range" min="0" max="100" step="1" data-lt-original-volume />
+                <span class="lt-slider-value" data-lt-original-volume-value>18</span>
+              </div>
+            </div>
+            <div class="lt-settings-row">
+              <span class="lt-settings-label">Translated voice volume</span>
+              <div class="lt-slider-row">
+                <input class="lt-slider" type="range" min="0" max="100" step="1" data-lt-translation-volume />
+                <span class="lt-slider-value" data-lt-translation-volume-value>100</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="lt-settings-section">
             <label class="lt-switch">
               <input type="checkbox" data-lt-bridge-mode />
               <span>Use local bridge (advanced)</span>
@@ -1296,6 +1313,10 @@
       opacitySlider: root.querySelector("[data-lt-opacity]"),
       opacityValue: root.querySelector("[data-lt-opacity-value]"),
       presetBtns: root.querySelectorAll("[data-lt-preset]"),
+      originalVolumeSlider: root.querySelector("[data-lt-original-volume]"),
+      originalVolumeValueLabel: root.querySelector("[data-lt-original-volume-value]"),
+      translationVolumeSlider: root.querySelector("[data-lt-translation-volume]"),
+      translationVolumeValueLabel: root.querySelector("[data-lt-translation-volume-value]"),
       bridgeMode: root.querySelector("[data-lt-bridge-mode]"),
       bridgeFields: root.querySelector("[data-lt-bridge-fields]"),
       bridgeToken: root.querySelector("[data-lt-bridge-token]")
@@ -1668,6 +1689,22 @@
       });
     });
 
+    // Settings: volume sliders (original video / translated voice)
+    elements.originalVolumeSlider.addEventListener("input", () => {
+      const v = Math.max(0, Math.min(100, Number(elements.originalVolumeSlider.value) || 0));
+      elements.originalVolumeValueLabel.textContent = String(v);
+      currentState = { ...currentState, originalVolume: v };
+      applyAudioMix({ ...overlaySettings(), originalVolume: v }, { remote: false });
+      void persistOverlaySettings();
+    });
+    elements.translationVolumeSlider.addEventListener("input", () => {
+      const v = Math.max(0, Math.min(100, Number(elements.translationVolumeSlider.value) || 0));
+      elements.translationVolumeValueLabel.textContent = String(v);
+      currentState = { ...currentState, translationVolume: v };
+      applyAudioMix({ ...overlaySettings(), translationVolume: v }, { remote: true });
+      void persistOverlaySettings();
+    });
+
     // Settings: bridge
     elements.bridgeMode.addEventListener("change", () => {
       elements.bridgeFields.hidden = !elements.bridgeMode.checked;
@@ -1927,6 +1964,12 @@
     elements.defaultLanguage.value = currentState.targetLanguage || "de";
     elements.opacitySlider.value = String(barOpacity);
     elements.opacityValue.textContent = String(barOpacity);
+    const ov = Number(currentState.originalVolume ?? 18);
+    const tv = Number(currentState.translationVolume ?? 100);
+    elements.originalVolumeSlider.value = String(ov);
+    elements.originalVolumeValueLabel.textContent = String(ov);
+    elements.translationVolumeSlider.value = String(tv);
+    elements.translationVolumeValueLabel.textContent = String(tv);
     elements.mode.dataset.mode = mode;
     elements.modeSegments.forEach((s) => {
       s.setAttribute("aria-selected", String(s.dataset.segment === mode));
