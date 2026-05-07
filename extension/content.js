@@ -1424,6 +1424,11 @@
 
   function selectedOverlaySettings() {
     const settings = overlaySettings();
+    // Read the key/token DIRECTLY from the inputs when present (even if
+    // empty) so an intentional clear actually clears, instead of falling
+    // back to the stored value via `||`.
+    const keyInputPresent = !!elements?.openaiKeyInput;
+    const tokenInputPresent = !!elements?.bridgeToken;
     return {
       ...settings,
       targetLanguage:
@@ -1435,8 +1440,12 @@
         requestedTranslationVoice ||
         settings.translationVoice,
       connectionMode: elements?.bridgeMode?.checked ? "bridge" : "extension",
-      openaiApiKey: elements?.openaiKeyInput?.value?.trim() || settings.openaiApiKey,
-      bridgeToken: elements?.bridgeToken?.value?.trim() || settings.bridgeToken
+      openaiApiKey: keyInputPresent
+        ? elements.openaiKeyInput.value.trim()
+        : settings.openaiApiKey,
+      bridgeToken: tokenInputPresent
+        ? elements.bridgeToken.value.trim()
+        : settings.bridgeToken
     };
   }
 
