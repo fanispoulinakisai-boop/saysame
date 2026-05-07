@@ -1391,14 +1391,10 @@
     });
 
     // Gear — open / close settings
-    console.log("[Sotto] Gear button bound:", elements.gearBtn);
     elements.gearBtn.addEventListener("click", (event) => {
-      console.log("[Sotto] Gear clicked. settingsOpen was:", settingsOpen);
       event.stopPropagation();
       event.preventDefault();
       toggleSettings();
-      const computed = getComputedStyle(elements.settings).display;
-      console.log("[Sotto] After toggle. settingsOpen now:", settingsOpen, "| root.classList:", root.className, "| settings display:", computed);
     });
     elements.settingsClose.addEventListener("click", (event) => {
       event.stopPropagation();

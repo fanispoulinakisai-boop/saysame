@@ -75,7 +75,7 @@ const LANGUAGE_NAMES = {
   zh: "Chinese"
 };
 void chrome.storage.local
-  .setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })
+  .setAccessLevel?.({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })
   .catch(() => {});
 
 const state = {
