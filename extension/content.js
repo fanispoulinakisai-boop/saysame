@@ -754,6 +754,13 @@
 
   async function startPageTranslation(settings = {}, options = {}) {
     const sessionSettings = { ...overlaySettings(), ...settings };
+    // Hard guard: voice-mode start must NEVER run when the user
+    // selected text mode. Without this, any code path that loses the
+    // mode field would silently start translated audio playback
+    // (text mode is captions-only by contract).
+    if (settings?.mode === "text" || mode === "text") {
+      throw new Error("Voice-mode start was called while text mode is selected.");
+    }
     createOverlay();
     overlayVisible = true;
     isHidden = false;
@@ -1218,8 +1225,6 @@
             </div>
           </div>
 
-          <button class="lt-btn lt-btn-icon lt-active-only lt-no-drag" type="button" data-lt-pause aria-label="Pause">${pauseSvg()}</button>
-
           <button class="lt-btn lt-btn-icon lt-no-drag" type="button" data-lt-gear aria-label="Settings">${gearSvg()}</button>
 
           <button class="lt-btn lt-btn-icon lt-active-only lt-no-drag" type="button" data-lt-hide aria-label="Hide bar">${hideSvg()}</button>
@@ -1227,6 +1232,11 @@
           <button class="lt-btn lt-btn-stop lt-active-only lt-no-drag" type="button" data-lt-stop>Stop</button>
 
           <button class="lt-btn lt-btn-icon lt-idle-only lt-no-drag" type="button" data-lt-close aria-label="Close">${closeSvg()}</button>
+        </div>
+
+        <div class="lt-error-banner" data-lt-error hidden>
+          <span class="lt-error-message" data-lt-error-message></span>
+          <button class="lt-error-close" type="button" data-lt-error-close aria-label="Dismiss error">×</button>
         </div>
 
         <div class="lt-captions" data-lt-captions>
@@ -1255,7 +1265,6 @@
 
       startBtn: root.querySelector("[data-lt-start]"),
       stopBtn: root.querySelector("[data-lt-stop]"),
-      pauseBtn: root.querySelector("[data-lt-pause]"),
       gearBtn: root.querySelector("[data-lt-gear]"),
       closeBtn: root.querySelector("[data-lt-close]"),
       hideBtn: root.querySelector("[data-lt-hide]"),
@@ -1271,6 +1280,10 @@
       captions: root.querySelector("[data-lt-captions]"),
       captionPrev: root.querySelector("[data-lt-caption-prev]"),
       captionCurrent: root.querySelector("[data-lt-caption-current]"),
+
+      errorBanner: root.querySelector("[data-lt-error]"),
+      errorMessage: root.querySelector("[data-lt-error-message]"),
+      errorClose: root.querySelector("[data-lt-error-close]"),
 
       // Settings
       settings: root.querySelector("[data-lt-settings]"),
@@ -1433,6 +1446,35 @@
   }
 
   // ===========================================================
+  // Error banner — surfaces Start failures so the user actually
+  // sees what went wrong instead of the bar silently snapping back
+  // to idle. Stays visible until dismissed or the next Start click.
+  // ===========================================================
+  function friendlyErrorMessage(raw) {
+    const message = String(raw || "").trim();
+    if (!message) return "Could not start live translation.";
+    if (/api key/i.test(message)) {
+      return "Open settings (⚙) and add your OpenAI API key, then try again.";
+    }
+    if (/could not reach openai/i.test(message)) {
+      return "Network error reaching OpenAI. Check your connection and try again.";
+    }
+    return message;
+  }
+
+  function showErrorBanner(message) {
+    if (!elements.errorBanner || !elements.errorMessage) return;
+    elements.errorMessage.textContent = friendlyErrorMessage(message);
+    elements.errorBanner.hidden = false;
+  }
+
+  function hideErrorBanner() {
+    if (!elements.errorBanner) return;
+    elements.errorBanner.hidden = true;
+    if (elements.errorMessage) elements.errorMessage.textContent = "";
+  }
+
+  // ===========================================================
   // Event binding
   // ===========================================================
   function bindOverlayEvents() {
@@ -1499,6 +1541,7 @@
     // Start button
     elements.startBtn.addEventListener("click", async () => {
       elements.startBtn.disabled = true;
+      hideErrorBanner();
       try {
         const settings = { ...selectedOverlaySettings(), mode };
         const response = await sendRuntimeMessage({
@@ -1510,21 +1553,26 @@
         }
         if (response.state) currentState = { ...currentState, ...response.state };
       } catch (error) {
+        const message = error?.message || "Could not start live translation.";
+        showErrorBanner(message);
         render({
           ...fallbackState(),
           ...currentState,
           running: false,
           connecting: false,
-          status: error?.message || "Could not start live translation."
+          status: message
         });
       } finally {
         elements.startBtn.disabled = false;
       }
     });
 
-    // Stop / Pause buttons
+    // Stop button (Pause was removed — it was just a duplicate Stop and
+    // misled users into thinking the session paused / billing paused).
     elements.stopBtn.addEventListener("click", () => void handleStop());
-    elements.pauseBtn.addEventListener("click", () => void handleStop()); // pause acts as stop in phase 1
+
+    // Error banner dismiss button
+    elements.errorClose?.addEventListener("click", () => hideErrorBanner());
 
     // Hide button — collapse to pill
     elements.hideBtn.addEventListener("click", () => {

@@ -932,6 +932,56 @@
 }
 
 /* ===========================================================
+   Error banner — Start-failure surface. Sits between the strip
+   and the captions. Stays visible until dismissed so users
+   actually see why translation didn't start.
+   =========================================================== */
+.lt-error-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-md);
+  padding: 10px 14px;
+  background: var(--danger-soft);
+  border-top: 1px solid var(--danger);
+  border-bottom: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.lt-error-banner[hidden] {
+  display: none;
+}
+
+.lt-error-message {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.lt-error-close {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  font-family: inherit;
+}
+
+.lt-error-close:hover {
+  background: rgba(255, 107, 92, 0.18);
+}
+
+/* ===========================================================
    Mobile / narrow viewport
    =========================================================== */
 @media (max-width: 640px) {

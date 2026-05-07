@@ -16,7 +16,9 @@ const DEFAULT_SETTINGS = {
   translationMode: "sync",
   originalVolume: 18,
   translationVolume: 100,
-  showSource: false
+  showSource: false,
+  // Pipeline: "voice" (realtime audio) or "text" (captions only).
+  mode: "voice"
 };
 
 const LANGUAGE_NAMES = {
@@ -746,6 +748,11 @@ function cleanSettings(settings = {}) {
       DEFAULT_SETTINGS.translationVoice
     ),
     translationMode: settings.translationMode === "turns" ? "turns" : "sync",
+    // Pipeline mode: "voice" = realtime translate (audio out) /
+    // "text" = whisper transcription + chat translation (captions only).
+    // Must round-trip through background or the content script
+    // silently falls back to voice mode and plays audio.
+    mode: settings.mode === "text" ? "text" : "voice",
     originalVolume: clampVolume(settings.originalVolume, DEFAULT_SETTINGS.originalVolume),
     translationVolume: clampVolume(
       settings.translationVolume,
