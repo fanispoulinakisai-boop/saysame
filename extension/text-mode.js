@@ -187,6 +187,20 @@
       channel.addEventListener("open", () => {
         if (session.closed) return;
         onStatus?.("Live Translator (text)");
+
+        // gpt-realtime-whisper does not accept server_vad turn detection,
+        // so we periodically tell the server to commit the input audio
+        // buffer for transcription. Interval is a tradeoff between
+        // latency (lower = faster captions) and segment quality (lower =
+        // more partial chunks, more gpt-4o-mini calls).
+        const COMMIT_INTERVAL_MS = 3000;
+        session.commitTimer = window.setInterval(() => {
+          if (session.closed) return;
+          if (channel.readyState !== "open") return;
+          try {
+            channel.send(JSON.stringify({ type: "input_audio_buffer.commit" }));
+          } catch {}
+        }, COMMIT_INTERVAL_MS);
       });
 
       channel.addEventListener("message", (event) => {
@@ -194,18 +208,26 @@
         const parsed = safeJsonParse(event.data);
         if (!parsed) return;
 
-        // Surface every event type to a global ring buffer so the
-        // orchestrator can inspect what the model is sending. Cheap.
+        // Surface every event type to the DOM (shared between content
+        // script and page world) so the orchestrator can inspect what
+        // the model is sending. Bounded to 200 entries.
         try {
-          window.__sottoTextModeEvents = window.__sottoTextModeEvents || [];
-          window.__sottoTextModeEvents.push({
+          const root = document.documentElement;
+          const existing = root.dataset.sottoTextEvents
+            ? JSON.parse(root.dataset.sottoTextEvents)
+            : [];
+          existing.push({
             ts: Date.now(),
             type: parsed.type,
-            keys: Object.keys(parsed)
+            keys: Object.keys(parsed),
+            sample: typeof parsed.delta === "string"
+              ? parsed.delta.slice(0, 80)
+              : (typeof parsed.transcript === "string"
+                  ? parsed.transcript.slice(0, 80)
+                  : null)
           });
-          if (window.__sottoTextModeEvents.length > 200) {
-            window.__sottoTextModeEvents.shift();
-          }
+          if (existing.length > 200) existing.shift();
+          root.dataset.sottoTextEvents = JSON.stringify(existing);
         } catch {}
 
         if (parsed.type === "error") {
@@ -293,6 +315,10 @@
     if (!session) return;
     activeSession = null;
     session.closed = true;
+    if (session.commitTimer) {
+      clearInterval(session.commitTimer);
+      session.commitTimer = null;
+    }
     try { session.dataChannel?.close(); } catch {}
     try { session.pc?.close(); } catch {}
     session.onClosed?.(reason);
