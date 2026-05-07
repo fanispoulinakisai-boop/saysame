@@ -1,9 +1,12 @@
 (() => {
-  const OVERLAY_VERSION = "0.1.26";
+  const OVERLAY_VERSION = "0.2.0";
   if (window.__liveTranslateOverlayVersion === OVERLAY_VERSION) return;
   window.__liveTranslateOverlayVersion = OVERLAY_VERSION;
-  document.querySelectorAll(".lt-root").forEach((element) => element.remove());
+  document.querySelectorAll(".lt-root, .lt-pill").forEach((element) => element.remove());
 
+  // ===========================================================
+  // Constants — copied from popup.js / previous content.js
+  // ===========================================================
   const LANGUAGE_OPTIONS = [
     { code: "en", name: "English", common: true },
     { code: "es", name: "Spanish", common: true },
@@ -67,22 +70,6 @@
     ...Object.fromEntries(LANGUAGE_OPTIONS.map(({ code, name }) => [code, name])),
     auto: "Detected"
   };
-  const LANGUAGE_NATIVE_NAMES = {
-    ar: "العربية",
-    de: "Deutsch",
-    en: "English",
-    es: "Español",
-    fa: "فارسی",
-    fr: "Français",
-    he: "עברית",
-    it: "Italiano",
-    ja: "日本語",
-    ko: "한국어",
-    pt: "Português",
-    ru: "Русский",
-    ur: "اردو",
-    zh: "中文"
-  };
   const RTL_LANGUAGE_CODES = new Set(["ar", "fa", "he", "ur"]);
   const WARM_LANGUAGE_CODES = LANGUAGE_OPTIONS
     .filter(({ common }) => common)
@@ -99,27 +86,24 @@
     { id: "shimmer", name: "Shimmer" },
     { id: "verse", name: "Verse" }
   ];
-  const STORAGE_KEY = "liveTranslateOverlayLayout";
-  const DEFAULT_LAYOUT = {
-    left: null,
-    top: null,
-    width: null,
-    height: null,
-    sideCollapsed: false
-  };
 
+  // Cost: $0.034 per minute of realtime translation.
+  const COST_PER_MINUTE = 0.034;
+  const COST_WARN_THRESHOLD = 5.0;
+
+  // ===========================================================
+  // State
+  // ===========================================================
   let root;
-  let elements;
+  let pill;
+  let elements = {};
   let currentState = {};
-  let layout = loadLayout();
-  let lastPointer;
-  let dragMode;
-  let overlayActivated = false;
+  let overlayVisible = false;
   let pageSession;
   let pageToken = 0;
   let currentTargetText = "";
+  let previousFinalizedTarget = "";
   let currentSourceText = "";
-  let pageHistory = [];
   let activeTargetLanguage;
   let activeTranslationVoice;
   let activeTranslationMode;
@@ -128,7 +112,19 @@
   let lastWarmAt = 0;
   let captionPollTimer;
   let lastCaptionText = "";
+  let sessionStartedAt = 0;
+  let tickerTimer;
+  let mode = "voice";
+  let barOpacity = 100;
+  let isHidden = false;
+  let isStreaming = false;
+  let settingsOpen = false;
+  let popoverOpen = false;
+  let suppressNextDocumentClick = false;
 
+  // ===========================================================
+  // Helpers
+  // ===========================================================
   function volumePercent(value) {
     const number = Number(value);
     if (!Number.isFinite(number)) return 0;
@@ -161,21 +157,8 @@
     return LANGUAGE_NAMES[code] || code || "Translation";
   }
 
-  function languageLabel(code) {
-    const name = languageName(code);
-    const nativeName = LANGUAGE_NATIVE_NAMES[code];
-    return nativeName && nativeName !== name ? `${name} · ${nativeName}` : name;
-  }
-
   function textDirection(code) {
     return RTL_LANGUAGE_CODES.has(code) ? "rtl" : "auto";
-  }
-
-  function displayTime() {
-    return new Date().toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
   }
 
   function syncRequestedControlsFromState(state = currentState) {
@@ -210,17 +193,17 @@
     ).replace(/\/$/, "");
     void fetch(`${backendUrl}/api/realtime/translations/trace`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         source: "content",
         type,
         running: Boolean(pageSession),
         targetLanguage: activeDisplayLanguage(),
-        requestedTargetLanguage: requestedTargetLanguage || elements?.language?.value || null,
+        requestedTargetLanguage:
+          requestedTargetLanguage || elements?.languageSelect?.value || null,
         translationVoice: activeDisplayVoice(),
-        requestedTranslationVoice: requestedTranslationVoice || elements?.voice?.value || null,
+        requestedTranslationVoice:
+          requestedTranslationVoice || elements?.voiceSelect?.value || null,
         translationMode: currentState.translationMode || "sync",
         pageToken,
         ...details
@@ -229,7 +212,7 @@
   }
 
   function liveSnapshot(status, overrides = {}) {
-    const base = {
+    return {
       ...fallbackState(),
       ...currentState,
       ...overlaySettings(),
@@ -238,100 +221,14 @@
       status,
       sourceText: trimDisplay(currentSourceText, 220),
       targetText: trimDisplay(currentTargetText, 280),
-      history: pageHistory,
       displayTargetLanguage: activeDisplayLanguage(),
       ...overrides
     };
-    return base;
   }
 
   function notifyLive(status, overrides = {}) {
     render(liveSnapshot(status, overrides));
-    trace("status", {
-      status,
-      ...overrides
-    });
-  }
-
-  function addHistoryTurn(languageCode = activeTargetLanguage || currentState.targetLanguage) {
-    const target = normalizeText(currentTargetText);
-    const source = normalizeText(currentSourceText);
-    if (!target && !source) return;
-
-    const last = pageHistory[0];
-    if (
-      last?.type !== "language" &&
-      last?.target === target &&
-      last?.source === source &&
-      last?.language === languageCode
-    ) return;
-
-    pageHistory = [
-      {
-        id: `${Date.now()}`,
-        type: "turn",
-        time: displayTime(),
-        language: languageCode,
-        languageName: languageName(languageCode),
-        languageLabel: languageLabel(languageCode),
-        target,
-        source
-      },
-      ...pageHistory
-    ].slice(0, 24);
-  }
-
-  function timelineItems(history = [], state = currentState) {
-    const items = [...history].reverse();
-    const liveTarget = normalizeText(state.targetText);
-    const liveSource = normalizeText(state.sourceText);
-
-    if (liveTarget || liveSource) {
-      const liveLanguage = activeDisplayLanguage(state);
-      const last = items.at(-1);
-      if (last?.type !== "language" || last.language !== liveLanguage) {
-        items.push({
-          id: `live-marker-${liveLanguage}`,
-          type: "language",
-          time: displayTime(),
-          language: liveLanguage,
-          languageName: languageName(liveLanguage),
-          languageLabel: languageLabel(liveLanguage),
-          live: true
-        });
-      }
-      items.push({
-        id: "live",
-        type: "live",
-        time: displayTime(),
-        language: liveLanguage,
-        languageName: languageName(liveLanguage),
-        languageLabel: languageLabel(liveLanguage),
-        target: liveTarget,
-        source: liveSource
-      });
-    }
-
-    return items;
-  }
-
-  function addLanguageMarker(languageCode, reason = "switch") {
-    const name = languageName(languageCode);
-    const last = pageHistory[0];
-    if (last?.type === "language" && last.language === languageCode) return;
-
-    pageHistory = [
-      {
-        id: `${Date.now()}-${languageCode}`,
-        type: "language",
-        time: displayTime(),
-        language: languageCode,
-        languageName: name,
-        languageLabel: languageLabel(languageCode),
-        reason
-      },
-      ...pageHistory
-    ].slice(0, 28);
+    trace("status", { status, ...overrides });
   }
 
   function readSourceTranscript(event) {
@@ -356,10 +253,7 @@
     if (!captionText || captionText === lastCaptionText) return;
     lastCaptionText = captionText;
     currentSourceText = captionText;
-    trace("source_caption.update", {
-      reason,
-      chars: captionText.length
-    });
+    trace("source_caption.update", { reason, chars: captionText.length });
     if (pageSession && root && !root.hidden) notifyLive("Live Translator");
   }
 
@@ -378,6 +272,9 @@
     lastCaptionText = "";
   }
 
+  // ===========================================================
+  // Realtime event handling — UNCHANGED FROM PREVIOUS LOGIC
+  // ===========================================================
   function handleRealtimeEvent(rawMessage, token) {
     if (token !== pageToken) return;
 
@@ -385,9 +282,7 @@
     try {
       event = JSON.parse(rawMessage);
     } catch {
-      trace("event.parse_error", {
-        rawLength: String(rawMessage || "").length
-      });
+      trace("event.parse_error", { rawLength: String(rawMessage || "").length });
       return;
     }
 
@@ -412,6 +307,7 @@
       event.delta
     ) {
       currentTargetText = `${currentTargetText}${event.delta}`;
+      isStreaming = true;
       notifyLive("Live Translator");
       return;
     }
@@ -422,8 +318,9 @@
         event.type === "response.output_audio_transcript.done") &&
       event.transcript
     ) {
+      previousFinalizedTarget = currentTargetText;
       currentTargetText = event.transcript;
-      addHistoryTurn();
+      isStreaming = false;
       notifyLive("Live Translator");
       return;
     }
@@ -448,13 +345,14 @@
     }
 
     if (event.type?.includes("speech_started")) {
-      if (currentTargetText) addHistoryTurn();
+      if (currentTargetText) previousFinalizedTarget = currentTargetText;
       currentSourceText = "";
       notifyLive("Live Translator");
       return;
     }
 
     if (event.type?.includes("speech_stopped")) {
+      isStreaming = false;
       notifyLive("Live Translator");
       return;
     }
@@ -467,27 +365,23 @@
       event.type === "response.content_part.done" ||
       event.type === "response.done"
     ) {
-      addHistoryTurn();
+      isStreaming = false;
       notifyLive("Live Translator");
     }
   }
 
   function waitForIceGatheringComplete(pc, timeoutMs = 5000) {
     if (pc.iceGatheringState === "complete") return Promise.resolve();
-
     return new Promise((resolve) => {
       const timeout = setTimeout(done, timeoutMs);
-
       function done() {
         clearTimeout(timeout);
         pc.removeEventListener("icegatheringstatechange", onChange);
         resolve();
       }
-
       function onChange() {
         if (pc.iceGatheringState === "complete") done();
       }
-
       pc.addEventListener("icegatheringstatechange", onChange);
     });
   }
@@ -500,10 +394,7 @@
     if (!video.paused) return;
     const playPromise = video.play();
     if (!playPromise?.then) return;
-    await Promise.race([
-      playPromise.catch(() => {}),
-      delay(250)
-    ]);
+    await Promise.race([playPromise.catch(() => {}), delay(250)]);
   }
 
   function captureVideoStreamOnce(video) {
@@ -511,28 +402,19 @@
     if (!capture) {
       throw new Error("This Chrome build cannot capture the page's video element.");
     }
-    const stream = capture.call(video);
-    return stream;
+    return capture.call(video);
   }
 
   async function capturedVideoStream(video, timeoutMs = 9000) {
     const start = Date.now();
     let lastStream;
-
     while (Date.now() - start < timeoutMs) {
-      if (video.paused) {
-        await nudgePlayback(video);
-      }
-
+      if (video.paused) await nudgePlayback(video);
       lastStream = captureVideoStreamOnce(video);
-      if (lastStream.getAudioTracks().length) {
-        return lastStream;
-      }
-
+      if (lastStream.getAudioTracks().length) return lastStream;
       lastStream.getTracks().forEach((track) => track.stop());
       await delay(300);
     }
-
     throw new Error("Video audio is not ready yet. Press play, then start Sotto again.");
   }
 
@@ -564,10 +446,7 @@
       pageSession.remoteAudio.muted = translationVolume === 0;
     }
 
-    return {
-      originalVolume,
-      translationVolume
-    };
+    return { originalVolume, translationVolume };
   }
 
   function playRemoteAudio(session, reason = "track") {
@@ -621,10 +500,7 @@
     lastWarmAt = now;
 
     const settings = overlaySettings();
-    const targetLanguages = [
-      preferredLanguage,
-      ...WARM_LANGUAGE_CODES
-    ].filter(
+    const targetLanguages = [preferredLanguage, ...WARM_LANGUAGE_CODES].filter(
       (language, index, languages) =>
         language &&
         language !== settings.targetLanguage &&
@@ -632,10 +508,7 @@
     );
     if (!targetLanguages.length) return;
 
-    trace("client_secret.prepare_requested", {
-      reason,
-      targetLanguages
-    });
+    trace("client_secret.prepare_requested", { reason, targetLanguages });
     void sendRuntimeMessage({
       type: "PREPARE_TRANSLATION_LANGUAGES",
       settings,
@@ -649,9 +522,40 @@
     });
   }
 
+  function showOverlay() {
+    createOverlay();
+    overlayVisible = true;
+    isHidden = false;
+    root.hidden = false;
+    if (pill) pill.classList.remove("is-visible");
+    root.classList.add("is-entering");
+    setTimeout(() => root?.classList.remove("is-entering"), 260);
+    render(currentState);
+  }
+
   function hideOverlay({ deactivate = true } = {}) {
-    if (deactivate) overlayActivated = false;
+    if (deactivate) overlayVisible = false;
     if (root) root.hidden = true;
+    if (pill) pill.classList.remove("is-visible");
+  }
+
+  function collapseToPill() {
+    if (!root) return;
+    isHidden = true;
+    root.hidden = true;
+    if (!pill) createPill();
+    pill.classList.add("is-visible");
+    updatePill();
+  }
+
+  function expandFromPill() {
+    isHidden = false;
+    if (pill) pill.classList.remove("is-visible");
+    if (root) {
+      root.hidden = false;
+      root.classList.add("is-entering");
+      setTimeout(() => root?.classList.remove("is-entering"), 260);
+    }
   }
 
   async function stopPageTranslation(reason = "user_stop", shouldRender = false) {
@@ -662,8 +566,14 @@
     activeTargetLanguage = undefined;
     activeTranslationVoice = undefined;
     activeTranslationMode = undefined;
+    sessionStartedAt = 0;
+    stopTickerTimer();
     stopSourceCaptionPolling();
     closeSession(session);
+    isStreaming = false;
+    previousFinalizedTarget = "";
+    currentTargetText = "";
+    currentSourceText = "";
 
     if (shouldRender) {
       render({
@@ -672,18 +582,26 @@
         connecting: false,
         status: "Stopped",
         targetText: "",
-        sourceText: "",
-        history: pageHistory
+        sourceText: ""
       });
-    } else {
-      hideOverlay();
+    } else if (overlayVisible && !isHidden) {
+      // Keep the bar visible but in idle mode.
+      render({
+        ...currentState,
+        running: false,
+        connecting: false,
+        status: "Ready",
+        targetText: "",
+        sourceText: ""
+      });
     }
   }
 
   async function startPageTranslation(settings = {}, options = {}) {
     const sessionSettings = { ...overlaySettings(), ...settings };
     createOverlay();
-    overlayActivated = true;
+    overlayVisible = true;
+    isHidden = false;
     root.hidden = false;
 
     const previousSession = pageSession;
@@ -697,12 +615,9 @@
     if (pageSession && !isHandover) return liveSnapshot("Live Translator");
 
     const token = pageToken + 1;
-    if (isHandover) {
-      addHistoryTurn(activeTargetLanguage || previousSession?.targetLanguage);
-    }
     currentTargetText = "";
     currentSourceText = "";
-    if (!isHandover) pageHistory = [];
+    if (!isHandover) previousFinalizedTarget = "";
     const nextLanguageName = languageName(sessionSettings.targetLanguage);
     const handoverStatus =
       handoverVoiceChanged && !handoverLanguageChanged
@@ -713,10 +628,7 @@
       connecting: true,
       targetText: ""
     }));
-    trace("content.session.start_requested", {
-      token,
-      href: window.location.href
-    });
+    trace("content.session.start_requested", { token, href: window.location.href });
 
     let nextSession;
     const previousAudioVolume = previousSession?.remoteAudio?.volume;
@@ -782,10 +694,7 @@
       });
 
       pc.addEventListener("connectionstatechange", () => {
-        trace("peer.connection_state", {
-          token,
-          connectionState: pc.connectionState
-        });
+        trace("peer.connection_state", { token, connectionState: pc.connectionState });
         if (token !== pageToken) return;
         if (pc.connectionState === "connected") notifyLive("Live Translator");
         if (pc.connectionState === "disconnected") notifyLive("Reconnecting");
@@ -798,10 +707,7 @@
         });
       });
       pc.addEventListener("signalingstatechange", () => {
-        trace("peer.signaling_state", {
-          token,
-          signalingState: pc.signalingState
-        });
+        trace("peer.signaling_state", { token, signalingState: pc.signalingState });
       });
 
       pc.addEventListener("track", (event) => {
@@ -845,7 +751,6 @@
         sdp: response.answerSdp
       });
       if (isHandover) {
-        addHistoryTurn(activeTargetLanguage || previousSession?.targetLanguage);
         currentTargetText = "";
         currentSourceText = "";
         pageToken = token;
@@ -859,9 +764,8 @@
       activeTranslationVoice = sessionSettings.translationVoice;
       activeTranslationMode = sessionSettings.translationMode;
       syncRequestedControlsFromState(sessionSettings);
-      if (!isHandover || handoverLanguageChanged) {
-        addLanguageMarker(sessionSettings.targetLanguage, isHandover ? "switch" : "start");
-      }
+      sessionStartedAt = Date.now();
+      startTickerTimer();
       trace("sdp.remote_set", {
         token,
         targetLanguage: sessionSettings.targetLanguage,
@@ -889,9 +793,13 @@
       }
       if (isHandover) {
         requestedTargetLanguage =
-          activeTargetLanguage || previousSession?.targetLanguage || currentState.targetLanguage;
+          activeTargetLanguage ||
+          previousSession?.targetLanguage ||
+          currentState.targetLanguage;
         requestedTranslationVoice =
-          activeTranslationVoice || previousSession?.translationVoice || currentState.translationVoice;
+          activeTranslationVoice ||
+          previousSession?.translationVoice ||
+          currentState.translationVoice;
       }
       render({
         ...currentState,
@@ -899,99 +807,354 @@
         running: Boolean(isHandover && previousSession),
         connecting: false,
         status: error?.message || "Could not start live translation.",
-        targetText: error?.message || "Could not start live translation.",
-        sourceText: "",
-        history: pageHistory
+        targetText: "",
+        sourceText: ""
       });
       throw error;
     }
+  }
+
+  // ===========================================================
+  // Cost ticker
+  // ===========================================================
+  function formatTickerTime(seconds) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+
+  function formatCost(amount) {
+    return `$${amount.toFixed(2)}`;
+  }
+
+  function updateTicker() {
+    if (!sessionStartedAt || !elements.tickerTime) return;
+    const elapsedSec = Math.max(0, (Date.now() - sessionStartedAt) / 1000);
+    const cost = (elapsedSec / 60) * COST_PER_MINUTE;
+    elements.tickerTime.textContent = formatTickerTime(elapsedSec);
+    elements.tickerAmount.textContent = formatCost(cost);
+    elements.ticker.classList.toggle("is-warn", cost >= COST_WARN_THRESHOLD);
+    if (pill && isHidden) updatePill(cost);
+  }
+
+  function startTickerTimer() {
+    stopTickerTimer();
+    updateTicker();
+    tickerTimer = window.setInterval(updateTicker, 1000);
+  }
+
+  function stopTickerTimer() {
+    if (tickerTimer) {
+      window.clearInterval(tickerTimer);
+      tickerTimer = undefined;
+    }
+    if (elements.tickerTime) {
+      elements.tickerTime.textContent = "00:00";
+      elements.tickerAmount.textContent = "$0.00";
+      elements.ticker?.classList.remove("is-warn");
+    }
+  }
+
+  function currentCost() {
+    if (!sessionStartedAt) return 0;
+    return ((Date.now() - sessionStartedAt) / 1000 / 60) * COST_PER_MINUTE;
+  }
+
+  // ===========================================================
+  // Overlay creation
+  // ===========================================================
+  function brandMarkSvg() {
+    return `
+      <span class="lt-mark" aria-hidden="true">
+        <svg viewBox="0 0 64 64" focusable="false">
+          <rect width="64" height="64" rx="15" fill="#D6FF3D"></rect>
+          <path d="M43 17H25.5C18.8 17 14 21 14 26.7C14 32.3 18.5 36 25.3 36H38.7C45.5 36 50 39.7 50 45.3C50 51 45.2 55 38.5 55H18" fill="none" stroke="#0B0C0A" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M21 25.5H32.5" fill="none" stroke="#0B0C0A" stroke-width="3.5" stroke-linecap="round" opacity="0.82"></path>
+          <path d="M31.5 45H43" fill="none" stroke="#0B0C0A" stroke-width="3.5" stroke-linecap="round" opacity="0.82"></path>
+          <circle cx="47" cy="17" r="4" fill="#0B0C0A"></circle>
+        </svg>
+      </span>
+    `;
+  }
+
+  function gearSvg() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>`;
+  }
+
+  function closeSvg() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+  }
+
+  function pauseSvg() {
+    return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"></rect><rect x="14" y="5" width="4" height="14" rx="1"></rect></svg>`;
+  }
+
+  function eyeSvg() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+  }
+
+  function dropletSvg() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5s6 6.5 6 11a6 6 0 1 1-12 0c0-4.5 6-11 6-11z"></path></svg>`;
+  }
+
+  function hideSvg() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+  }
+
+  function playSvg() {
+    return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"></path></svg>`;
+  }
+
+  function buildLanguageOptions(select) {
+    const commonGroup = document.createElement("optgroup");
+    commonGroup.label = "Common";
+    const moreGroup = document.createElement("optgroup");
+    moreGroup.label = "More languages";
+    for (const { code, name, common } of LANGUAGE_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = code;
+      option.textContent = name;
+      (common ? commonGroup : moreGroup).append(option);
+    }
+    select.replaceChildren(commonGroup, moreGroup);
+  }
+
+  function buildVoiceOptions(select) {
+    const preferredGroup = document.createElement("optgroup");
+    preferredGroup.label = "Best quality";
+    const moreGroup = document.createElement("optgroup");
+    moreGroup.label = "More voices";
+    for (const { id, name, preferred } of VOICE_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = name;
+      (preferred ? preferredGroup : moreGroup).append(option);
+    }
+    select.replaceChildren(preferredGroup, moreGroup);
   }
 
   function createOverlay() {
     if (root) return;
 
     root = document.createElement("aside");
-    root.className = "lt-root";
+    root.className = "lt-root is-idle";
+    root.setAttribute("role", "region");
+    root.setAttribute("aria-label", "Sotto live translator");
     root.innerHTML = `
       <div class="lt-panel">
-        <div class="lt-toolbar" data-lt-drag-handle>
-          <div class="lt-brand" aria-label="Sotto">
-            <span class="lt-mark" aria-hidden="true">
-              <svg viewBox="0 0 64 64" focusable="false">
-                <rect width="64" height="64" rx="15" fill="#E2FF66"></rect>
-                <path d="M43 17H25.5C18.8 17 14 21 14 26.7C14 32.3 18.5 36 25.3 36H38.7C45.5 36 50 39.7 50 45.3C50 51 45.2 55 38.5 55H18" fill="none" stroke="#10110D" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"></path>
-                <path d="M21 25.5H32.5" fill="none" stroke="#10110D" stroke-width="3.5" stroke-linecap="round" opacity="0.82"></path>
-                <path d="M31.5 45H43" fill="none" stroke="#10110D" stroke-width="3.5" stroke-linecap="round" opacity="0.82"></path>
-                <circle cx="47" cy="17" r="4" fill="#10110D"></circle>
-              </svg>
-            </span>
+        <div class="lt-settings" data-lt-settings>
+          <div class="lt-settings-header">
+            <span class="lt-settings-title">Settings</span>
+            <button class="lt-btn lt-btn-icon" type="button" data-lt-settings-close aria-label="Close settings">${closeSvg()}</button>
+          </div>
+
+          <div class="lt-settings-section">
+            <div class="lt-settings-row lt-secret-row">
+              <label class="lt-settings-label" for="lt-openai-key">OpenAI API key</label>
+              <input class="lt-input" type="password" id="lt-openai-key" autocomplete="off" spellcheck="false" placeholder="sk-..." data-lt-openai-key />
+              <button class="lt-secret-toggle" type="button" data-lt-key-toggle aria-label="Show key">${eyeSvg()}</button>
+            </div>
+          </div>
+
+          <div class="lt-settings-section">
+            <div class="lt-settings-row">
+              <span class="lt-settings-label">Default mode</span>
+              <select class="lt-input" data-lt-default-mode>
+                <option value="voice">Voice (realtime audio)</option>
+                <option value="text">Text (coming soon)</option>
+              </select>
+            </div>
+            <div class="lt-settings-row">
+              <span class="lt-settings-label">Default voice</span>
+              <select class="lt-input" data-lt-default-voice></select>
+            </div>
+            <div class="lt-settings-row">
+              <span class="lt-settings-label">Default language</span>
+              <select class="lt-input" data-lt-default-language></select>
+            </div>
+          </div>
+
+          <div class="lt-settings-section">
+            <div class="lt-settings-row">
+              <span class="lt-settings-label">Bar transparency</span>
+              <div class="lt-slider-row">
+                <input class="lt-slider" type="range" min="0" max="100" step="1" data-lt-opacity />
+                <span class="lt-slider-value" data-lt-opacity-value>100</span>
+              </div>
+              <div class="lt-presets">
+                <button class="lt-preset" type="button" data-lt-preset="100">Solid</button>
+                <button class="lt-preset" type="button" data-lt-preset="70">70%</button>
+                <button class="lt-preset" type="button" data-lt-preset="40">40%</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="lt-settings-section">
+            <label class="lt-switch">
+              <input type="checkbox" data-lt-bridge-mode />
+              <span>Use local bridge (advanced)</span>
+            </label>
+            <div class="lt-bridge-fields" data-lt-bridge-fields hidden>
+              <div class="lt-settings-row">
+                <label class="lt-settings-label" for="lt-bridge-token">Bridge token</label>
+                <input class="lt-input" type="password" id="lt-bridge-token" autocomplete="off" spellcheck="false" data-lt-bridge-token />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lt-strip" data-lt-drag-handle>
+          <div class="lt-brand lt-no-drag">
+            ${brandMarkSvg()}
             <span class="lt-wordmark">Sotto</span>
-            <span class="lt-state" data-lt-status>Ready</span>
+            <span class="lt-live" aria-label="Live">
+              <span class="lt-live-dot"></span>
+              <span>Live</span>
+            </span>
           </div>
-          <label class="lt-select-control lt-language-control">
-            <span>Hear</span>
-            <select data-lt-language></select>
-          </label>
-          <label class="lt-select-control lt-voice-control">
-            <span>Voice</span>
-            <select data-lt-voice></select>
-          </label>
-          <button class="lt-button" type="button" data-lt-collapse-source>Text</button>
-          <button class="lt-button lt-button-primary" type="button" data-lt-start-stop>Stop</button>
+
+          <!-- Idle controls -->
+          <div class="lt-mode lt-idle-only lt-no-drag" data-lt-mode data-mode="voice" role="tablist" aria-label="Translation mode">
+            <span class="lt-mode-indicator" aria-hidden="true"></span>
+            <button class="lt-mode-segment" type="button" data-segment="voice" role="tab" aria-selected="true">
+              <span aria-hidden="true">🎙</span><span>Voice</span>
+            </button>
+            <button class="lt-mode-segment" type="button" data-segment="text" role="tab" aria-selected="false">
+              <span aria-hidden="true">💬</span><span>Text</span>
+            </button>
+          </div>
+
+          <div class="lt-select lt-idle-only lt-no-drag" data-lt-voice-wrap>
+            <select aria-label="Translation voice" data-lt-voice></select>
+          </div>
+
+          <div class="lt-select lt-no-drag" data-lt-language-wrap>
+            <select aria-label="Hear language" data-lt-language></select>
+          </div>
+
+          <span class="lt-spacer"></span>
+
+          <button class="lt-btn lt-btn-primary lt-idle-only lt-no-drag" type="button" data-lt-start>Start</button>
+
+          <!-- Active controls -->
+          <span class="lt-ticker lt-active-only lt-no-drag" data-lt-ticker>
+            <span data-lt-ticker-time class="lt-ticker-time">00:00</span>
+            <span class="lt-ticker-sep">·</span>
+            <span data-lt-ticker-amount class="lt-ticker-amount">$0.00</span>
+          </span>
+
+          <div class="lt-transparency-wrap lt-active-only lt-no-drag">
+            <button class="lt-btn lt-btn-icon" type="button" data-lt-transparency aria-label="Bar transparency">${dropletSvg()}</button>
+            <div class="lt-popover" data-lt-popover>
+              <button class="lt-popover-btn" type="button" data-lt-preset-quick="100">Solid</button>
+              <button class="lt-popover-btn" type="button" data-lt-preset-quick="70">70%</button>
+              <button class="lt-popover-btn" type="button" data-lt-preset-quick="40">40%</button>
+            </div>
+          </div>
+
+          <button class="lt-btn lt-btn-icon lt-active-only lt-no-drag" type="button" data-lt-pause aria-label="Pause">${pauseSvg()}</button>
+
+          <button class="lt-btn lt-btn-icon lt-no-drag" type="button" data-lt-gear aria-label="Settings">${gearSvg()}</button>
+
+          <button class="lt-btn lt-btn-icon lt-active-only lt-no-drag" type="button" data-lt-hide aria-label="Hide bar">${hideSvg()}</button>
+
+          <button class="lt-btn lt-btn-stop lt-active-only lt-no-drag" type="button" data-lt-stop>Stop</button>
+
+          <button class="lt-btn lt-btn-icon lt-idle-only lt-no-drag" type="button" data-lt-close aria-label="Close">${closeSvg()}</button>
         </div>
-        <div class="lt-body">
-          <div class="lt-main">
-            <div class="lt-target" data-lt-target></div>
-          </div>
-          <div class="lt-side" data-lt-side>
-            <div class="lt-source" data-lt-source></div>
-            <div class="lt-history" data-lt-history aria-label="Translation history"></div>
+
+        <div class="lt-captions" data-lt-captions>
+          <div class="lt-captions-inner">
+            <p class="lt-caption-prev" data-lt-caption-prev></p>
+            <p class="lt-caption-current" data-lt-caption-current></p>
           </div>
         </div>
-        <span class="lt-resize-edge lt-resize-edge-n" aria-hidden="true" data-lt-resize-mode="resize-n"></span>
-        <span class="lt-resize-edge lt-resize-edge-e" aria-hidden="true" data-lt-resize-mode="resize-e"></span>
-        <span class="lt-resize-edge lt-resize-edge-s" aria-hidden="true" data-lt-resize-mode="resize-s"></span>
-        <span class="lt-resize-edge lt-resize-edge-w" aria-hidden="true" data-lt-resize-mode="resize-w"></span>
-        <button class="lt-resize-corner lt-resize-corner-nw" type="button" aria-label="Resize translation overlay from top left" data-lt-resize-mode="resize-nw"></button>
-        <button class="lt-resize-corner lt-resize-corner-ne" type="button" aria-label="Resize translation overlay from top right" data-lt-resize-mode="resize-ne"></button>
-        <button class="lt-resize-corner lt-resize-corner-sw" type="button" aria-label="Resize translation overlay from bottom left" data-lt-resize-mode="resize-sw"></button>
-        <button class="lt-resize-corner lt-resize-corner-se" type="button" aria-label="Resize translation overlay from bottom right" data-lt-resize-mode="resize-se"></button>
       </div>
     `;
+
     document.documentElement.append(root);
 
     elements = {
-      status: root.querySelector("[data-lt-status]"),
-      language: root.querySelector("[data-lt-language]"),
-      voice: root.querySelector("[data-lt-voice]"),
-      dragHandle: root.querySelector("[data-lt-drag-handle]"),
-      startStop: root.querySelector("[data-lt-start-stop]"),
-      collapseSource: root.querySelector("[data-lt-collapse-source]"),
-      target: root.querySelector("[data-lt-target]"),
-      side: root.querySelector("[data-lt-side]"),
-      source: root.querySelector("[data-lt-source]"),
-      history: root.querySelector("[data-lt-history]"),
-      resizeHandles: root.querySelectorAll("[data-lt-resize-mode]")
+      panel: root.querySelector(".lt-panel"),
+      strip: root.querySelector(".lt-strip"),
+      brand: root.querySelector(".lt-brand"),
+
+      mode: root.querySelector("[data-lt-mode]"),
+      modeSegments: root.querySelectorAll("[data-segment]"),
+
+      voiceWrap: root.querySelector("[data-lt-voice-wrap]"),
+      voiceSelect: root.querySelector("[data-lt-voice]"),
+      languageWrap: root.querySelector("[data-lt-language-wrap]"),
+      languageSelect: root.querySelector("[data-lt-language]"),
+
+      startBtn: root.querySelector("[data-lt-start]"),
+      stopBtn: root.querySelector("[data-lt-stop]"),
+      pauseBtn: root.querySelector("[data-lt-pause]"),
+      gearBtn: root.querySelector("[data-lt-gear]"),
+      closeBtn: root.querySelector("[data-lt-close]"),
+      hideBtn: root.querySelector("[data-lt-hide]"),
+      transparencyBtn: root.querySelector("[data-lt-transparency]"),
+
+      ticker: root.querySelector("[data-lt-ticker]"),
+      tickerTime: root.querySelector("[data-lt-ticker-time]"),
+      tickerAmount: root.querySelector("[data-lt-ticker-amount]"),
+
+      popover: root.querySelector("[data-lt-popover]"),
+      presetQuickBtns: root.querySelectorAll("[data-lt-preset-quick]"),
+
+      captions: root.querySelector("[data-lt-captions]"),
+      captionPrev: root.querySelector("[data-lt-caption-prev]"),
+      captionCurrent: root.querySelector("[data-lt-caption-current]"),
+
+      // Settings
+      settings: root.querySelector("[data-lt-settings]"),
+      settingsClose: root.querySelector("[data-lt-settings-close]"),
+      openaiKeyInput: root.querySelector("[data-lt-openai-key]"),
+      keyToggle: root.querySelector("[data-lt-key-toggle]"),
+      defaultMode: root.querySelector("[data-lt-default-mode]"),
+      defaultVoice: root.querySelector("[data-lt-default-voice]"),
+      defaultLanguage: root.querySelector("[data-lt-default-language]"),
+      opacitySlider: root.querySelector("[data-lt-opacity]"),
+      opacityValue: root.querySelector("[data-lt-opacity-value]"),
+      presetBtns: root.querySelectorAll("[data-lt-preset]"),
+      bridgeMode: root.querySelector("[data-lt-bridge-mode]"),
+      bridgeFields: root.querySelector("[data-lt-bridge-fields]"),
+      bridgeToken: root.querySelector("[data-lt-bridge-token]")
     };
-    populateLanguages();
-    populateVoices();
+
+    buildVoiceOptions(elements.voiceSelect);
+    buildLanguageOptions(elements.languageSelect);
+    buildVoiceOptions(elements.defaultVoice);
+    buildLanguageOptions(elements.defaultLanguage);
     bindOverlayEvents();
-    applyLayout();
+    applyOpacity();
   }
 
-  function loadLayout() {
-    try {
-      return {
-        ...DEFAULT_LAYOUT,
-        ...JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "{}")
-      };
-    } catch {
-      return { ...DEFAULT_LAYOUT };
-    }
+  function createPill() {
+    pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "lt-pill";
+    pill.setAttribute("aria-label", "Show Sotto bar");
+    pill.innerHTML = `
+      <span class="lt-pill-icon">${playSvg()}</span>
+      <span class="lt-pill-amount" data-lt-pill-amount>$0.00</span>
+      <span class="lt-pill-close" data-lt-pill-close aria-label="Stop translation">×</span>
+    `;
+    document.documentElement.append(pill);
+    pill.addEventListener("click", (event) => {
+      if (event.target.closest("[data-lt-pill-close]")) {
+        event.stopPropagation();
+        void handleStop();
+        return;
+      }
+      expandFromPill();
+    });
   }
 
-  function saveLayout() {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+  function updatePill(cost = currentCost()) {
+    if (!pill) return;
+    const amountEl = pill.querySelector("[data-lt-pill-amount]");
+    if (amountEl) amountEl.textContent = formatCost(cost);
   }
 
   function sendRuntimeMessage(message) {
@@ -1007,266 +1170,30 @@
     });
   }
 
-  function populateLanguages() {
-    const commonGroup = document.createElement("optgroup");
-    commonGroup.label = "Common";
-    const moreGroup = document.createElement("optgroup");
-    moreGroup.label = "More languages";
-
-    for (const { code, name, common } of LANGUAGE_OPTIONS) {
-      const option = document.createElement("option");
-      option.value = code;
-      option.textContent = name;
-      (common ? commonGroup : moreGroup).append(option);
-    }
-    elements.language.replaceChildren(commonGroup, moreGroup);
-  }
-
-  function populateVoices() {
-    const preferredGroup = document.createElement("optgroup");
-    preferredGroup.label = "Best quality";
-    const moreGroup = document.createElement("optgroup");
-    moreGroup.label = "More voices";
-
-    for (const { id, name, preferred } of VOICE_OPTIONS) {
-      const option = document.createElement("option");
-      option.value = id;
-      option.textContent = name;
-      (preferred ? preferredGroup : moreGroup).append(option);
-    }
-    elements.voice.replaceChildren(preferredGroup, moreGroup);
-  }
-
-  function clampLayout() {
-    const maxWidth = Math.max(300, window.innerWidth - 24);
-    const maxHeight = Math.max(130, window.innerHeight - 24);
-    const width = Math.min(Math.max(layout.width || root.offsetWidth || 700, 300), maxWidth);
-    const height = Math.min(Math.max(layout.height || root.offsetHeight || 190, 130), maxHeight);
-    const left = Math.min(
-      Math.max(layout.left ?? window.innerWidth - width - 18, 12),
-      Math.max(12, window.innerWidth - width - 12)
-    );
-    const top = Math.min(
-      Math.max(layout.top ?? window.innerHeight - height - 92, 12),
-      Math.max(12, window.innerHeight - height - 12)
-    );
-
-    layout = { ...layout, left, top, width, height };
-  }
-
-  function applyLayout() {
-    if (!root) return;
-    clampLayout();
-    root.style.left = `${layout.left}px`;
-    root.style.top = `${layout.top}px`;
-    root.style.width = `${layout.width}px`;
-    root.style.height = `${layout.height}px`;
-    root.style.right = "auto";
-    root.style.bottom = "auto";
-    root.classList.toggle("is-side-collapsed", Boolean(layout.sideCollapsed));
-    root.classList.toggle("is-compact", layout.width < 560 || layout.height < 210);
-    root.classList.toggle("is-roomy", layout.width > 760 && layout.height > 235);
-    root.style.setProperty(
-      "--lt-target-lines",
-      String(Math.max(2, Math.min(8, Math.floor((layout.height - 74) / 38))))
-    );
-    elements.collapseSource.textContent = layout.sideCollapsed ? "Text" : "Hide";
-  }
-
-  function beginPointerMode(event, mode) {
-    if (event.button !== 0) return;
-    if (event.target.closest("button, select, input, .lt-history")) return;
-    dragMode = mode;
-    lastPointer = {
-      x: event.clientX,
-      y: event.clientY,
-      left: layout.left ?? root.getBoundingClientRect().left,
-      top: layout.top ?? root.getBoundingClientRect().top,
-      width: layout.width ?? root.getBoundingClientRect().width,
-      height: layout.height ?? root.getBoundingClientRect().height
+  // ===========================================================
+  // Settings persistence (read/write same keys popup used)
+  // ===========================================================
+  function fallbackState() {
+    return {
+      running: false,
+      connecting: false,
+      status: "Ready",
+      sourceText: "",
+      targetText: "",
+      backendUrl: "http://127.0.0.1:8799",
+      sourceLanguage: "auto",
+      targetLanguage: "de",
+      translationVoice: "marin",
+      translationMode: "sync",
+      originalVolume: 18,
+      translationVolume: 100,
+      showSource: false,
+      connectionMode: "extension",
+      openaiApiKey: "",
+      bridgeToken: "",
+      mode: "voice",
+      barOpacity: 100
     };
-    root.setPointerCapture?.(event.pointerId);
-    event.preventDefault();
-  }
-
-  function beginResizeMode(event, mode) {
-    if (event.button !== 0) return;
-    dragMode = mode;
-    lastPointer = {
-      x: event.clientX,
-      y: event.clientY,
-      left: layout.left ?? root.getBoundingClientRect().left,
-      top: layout.top ?? root.getBoundingClientRect().top,
-      width: layout.width ?? root.getBoundingClientRect().width,
-      height: layout.height ?? root.getBoundingClientRect().height
-    };
-    root.setPointerCapture?.(event.pointerId);
-    event.preventDefault();
-  }
-
-  function resizeLayoutFromPointer(mode, dx, dy) {
-    const minWidth = 300;
-    const minHeight = 130;
-    let left = lastPointer.left;
-    let top = lastPointer.top;
-    let width = lastPointer.width;
-    let height = lastPointer.height;
-
-    if (mode.includes("e")) {
-      width = lastPointer.width + dx;
-    }
-    if (mode.includes("s")) {
-      height = lastPointer.height + dy;
-    }
-    if (mode.includes("w")) {
-      width = lastPointer.width - dx;
-      left = lastPointer.left + dx;
-      if (width < minWidth) {
-        left -= minWidth - width;
-        width = minWidth;
-      }
-    }
-    if (mode.includes("n")) {
-      height = lastPointer.height - dy;
-      top = lastPointer.top + dy;
-      if (height < minHeight) {
-        top -= minHeight - height;
-        height = minHeight;
-      }
-    }
-
-    layout.left = left;
-    layout.top = top;
-    layout.width = Math.max(minWidth, width);
-    layout.height = Math.max(minHeight, height);
-  }
-
-  function bindOverlayEvents() {
-    root.addEventListener("pointerdown", () => {
-      playRemoteAudio(pageSession, "overlay_gesture");
-    }, { capture: true });
-
-    elements.dragHandle.addEventListener("pointerdown", (event) => {
-      beginPointerMode(event, "drag");
-    });
-
-    elements.resizeHandles.forEach((handle) => {
-      handle.addEventListener("pointerdown", (event) => {
-        beginResizeMode(event, handle.dataset.ltResizeMode);
-      });
-    });
-
-    root.addEventListener("pointermove", (event) => {
-      if (!dragMode || !lastPointer) return;
-      const dx = event.clientX - lastPointer.x;
-      const dy = event.clientY - lastPointer.y;
-
-      if (dragMode === "drag") {
-        layout.left = lastPointer.left + dx;
-        layout.top = lastPointer.top + dy;
-      } else if (dragMode.startsWith("resize-")) {
-        resizeLayoutFromPointer(dragMode.replace("resize-", ""), dx, dy);
-      }
-
-      applyLayout();
-    });
-
-    root.addEventListener("pointerup", (event) => {
-      if (!dragMode) return;
-      dragMode = undefined;
-      lastPointer = undefined;
-      root.releasePointerCapture?.(event.pointerId);
-      saveLayout();
-    });
-
-    window.addEventListener("resize", () => {
-      applyLayout();
-      saveLayout();
-    });
-
-    for (const eventName of ["pointerdown", "focus", "mouseenter"]) {
-      elements.language.addEventListener(eventName, () => {
-        warmTranslationLanguages(`language_${eventName}`);
-      });
-    }
-
-    elements.language.addEventListener("change", async () => {
-      const targetLanguage = elements.language.value;
-      requestedTargetLanguage = targetLanguage;
-      warmTranslationLanguages("language_change", targetLanguage);
-      if (pageSession) {
-        render(liveSnapshot("Switching language", {
-          running: true,
-          connecting: true,
-          targetText: "",
-          displayTargetLanguage: targetLanguage
-        }));
-      }
-      const response = await sendRuntimeMessage({
-        type: "UPDATE_SETTINGS",
-        settings: selectedOverlaySettings()
-      }).catch(() => {});
-      if (response?.state) {
-        currentState = { ...currentState, ...response.state };
-        if (!currentState.connecting) syncRequestedControlsFromState(currentState);
-        if (root && !root.hidden) render(currentState);
-      }
-    });
-
-    elements.voice.addEventListener("change", async () => {
-      const translationVoice = elements.voice.value;
-      requestedTranslationVoice = translationVoice;
-      if (pageSession) {
-        render(liveSnapshot("Switching voice", {
-          running: true,
-          connecting: true,
-          targetText: ""
-        }));
-      }
-      const response = await sendRuntimeMessage({
-        type: "UPDATE_SETTINGS",
-        settings: selectedOverlaySettings()
-      }).catch(() => {});
-      if (response?.state) {
-        currentState = { ...currentState, ...response.state };
-        if (!currentState.connecting) syncRequestedControlsFromState(currentState);
-        if (root && !root.hidden) render(currentState);
-      }
-    });
-
-    elements.startStop.addEventListener("click", async () => {
-      elements.startStop.disabled = true;
-      try {
-        if (pageSession || currentState.running || currentState.connecting) {
-          await stopPageTranslation("overlay_stop", false);
-          const response = await sendRuntimeMessage({ type: "STOP_TRANSLATION" }).catch(() => null);
-          if (response?.state) currentState = { ...currentState, ...response.state };
-        } else {
-          const response = await sendRuntimeMessage({
-            type: "START_TRANSLATION",
-            settings: selectedOverlaySettings()
-          });
-          if (response?.state) currentState = { ...currentState, ...response.state };
-        }
-      } catch (error) {
-        render({
-          ...fallbackState(),
-          ...currentState,
-          running: false,
-          connecting: false,
-          status: error?.message || "Could not start live translation.",
-          targetText: error?.message || "Could not start live translation."
-        });
-      } finally {
-        elements.startStop.disabled = false;
-      }
-    });
-
-    elements.collapseSource.addEventListener("click", () => {
-      layout.sideCollapsed = !layout.sideCollapsed;
-      applyLayout();
-      saveLayout();
-    });
   }
 
   function overlaySettings() {
@@ -1288,7 +1215,10 @@
       translationMode: currentState.translationMode || "sync",
       originalVolume: currentState.originalVolume ?? 18,
       translationVolume: currentState.translationVolume ?? 100,
-      showSource: currentState.showSource ?? false
+      showSource: currentState.showSource ?? false,
+      connectionMode: currentState.connectionMode || "extension",
+      openaiApiKey: currentState.openaiApiKey || "",
+      bridgeToken: currentState.bridgeToken || ""
     };
   }
 
@@ -1296,184 +1226,452 @@
     const settings = overlaySettings();
     return {
       ...settings,
-      targetLanguage: elements?.language?.value || requestedTargetLanguage || settings.targetLanguage,
-      translationVoice: elements?.voice?.value || requestedTranslationVoice || settings.translationVoice
+      targetLanguage:
+        elements?.languageSelect?.value ||
+        requestedTargetLanguage ||
+        settings.targetLanguage,
+      translationVoice:
+        elements?.voiceSelect?.value ||
+        requestedTranslationVoice ||
+        settings.translationVoice,
+      connectionMode: elements?.bridgeMode?.checked ? "bridge" : "extension",
+      openaiApiKey: elements?.openaiKeyInput?.value?.trim() || settings.openaiApiKey,
+      bridgeToken: elements?.bridgeToken?.value?.trim() || settings.bridgeToken
     };
   }
 
-  function emptyText(text, fallback) {
-    const value = String(text || "").trim();
-    return value || fallback;
+  async function persistOverlaySettings(extra = {}) {
+    const settings = { ...selectedOverlaySettings(), ...extra };
+    currentState = { ...currentState, ...settings };
+    try {
+      await chrome.storage.local.set({
+        ...settings,
+        mode,
+        barOpacity
+      });
+    } catch (error) {
+      trace("settings.persist_error", { errorMessage: error?.message || null });
+    }
+    return settings;
   }
 
-  function renderHistory(history = [], showSource = false) {
-    if (!history.length) {
-      elements.history.replaceChildren();
-      elements.history.hidden = true;
-      return;
-    }
-
-    elements.history.hidden = false;
-    const fragment = document.createDocumentFragment();
-    for (const turn of history.slice(0, 16)) {
-      if (turn.type === "language") {
-        const marker = document.createElement("div");
-        marker.className = "lt-history-marker";
-
-        const time = document.createElement("span");
-        time.textContent = turn.time;
-        const language = document.createElement("strong");
-        language.textContent = turn.languageLabel || languageLabel(turn.language);
-        language.dir = textDirection(turn.language);
-
-        marker.append(time, language);
-        fragment.append(marker);
-        continue;
-      }
-
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "lt-history-item";
-
-      const meta = document.createElement("span");
-      meta.className = "lt-history-meta";
-      meta.textContent = `${turn.time} · ${turn.languageLabel || languageLabel(turn.language)}`;
-
-      const text = document.createElement("span");
-      text.className = "lt-history-text";
-      text.lang = turn.language || "";
-      text.dir = textDirection(turn.language);
-      text.textContent =
-        showSource && turn.source
-          ? `${turn.source} -> ${turn.target}`
-          : turn.target;
-
-      item.append(meta, text);
-      item.title = `${meta.textContent} ${text.textContent}`;
-      fragment.append(item);
-    }
-    elements.history.replaceChildren(fragment);
-  }
-
-  function renderMainFlow(state) {
-    const items = timelineItems(state.history, state);
-    if (!items.length) {
-      elements.target.textContent =
-        state.running || state.connecting
-          ? state.translationMode === "turns" ? "Listening..." : "Live Translator..."
-          : "Ready";
-      return;
-    }
-
-    const wasNearBottom =
-      elements.target.scrollTop + elements.target.clientHeight >=
-      elements.target.scrollHeight - 28;
-    const fragment = document.createDocumentFragment();
-
-    for (const item of items) {
-      if (item.type === "language") {
-        const marker = document.createElement("div");
-        marker.className = "lt-flow-marker";
-        marker.dataset.live = item.live ? "true" : "false";
-
-        const time = document.createElement("span");
-        time.textContent = item.time;
-        const language = document.createElement("strong");
-        language.textContent = item.languageLabel || languageLabel(item.language);
-        language.dir = textDirection(item.language);
-
-        marker.append(time, language);
-        fragment.append(marker);
-        continue;
-      }
-
-      const row = document.createElement("div");
-      row.className = item.type === "live" ? "lt-flow-item is-live" : "lt-flow-item";
-      row.lang = item.language || "";
-      row.dir = textDirection(item.language);
-
-      const text = document.createElement("div");
-      text.className = "lt-flow-text";
-      text.textContent = emptyText(item.target, item.type === "live" ? "Listening..." : "");
-      row.append(text);
-
-      if (state.showSource && item.source) {
-        const source = document.createElement("div");
-        source.className = "lt-flow-source";
-        source.textContent = item.source;
-        row.append(source);
-      }
-
-      fragment.append(row);
-    }
-
-    elements.target.replaceChildren(fragment);
-    if (wasNearBottom || state.connecting) {
-      elements.target.scrollTop = elements.target.scrollHeight;
+  async function pushSettingsToBackground() {
+    const settings = await persistOverlaySettings();
+    if (pageSession || currentState.running || currentState.connecting) {
+      const response = await sendRuntimeMessage({
+        type: "UPDATE_SETTINGS",
+        settings
+      }).catch(() => null);
+      if (response?.state) currentState = { ...currentState, ...response.state };
     }
   }
 
+  // ===========================================================
+  // Event binding
+  // ===========================================================
+  function bindOverlayEvents() {
+    // Unlock audio on user gesture anywhere on the bar
+    root.addEventListener(
+      "pointerdown",
+      () => {
+        playRemoteAudio(pageSession, "overlay_gesture");
+      },
+      { capture: true }
+    );
+
+    // Mode toggle
+    elements.modeSegments.forEach((segment) => {
+      segment.addEventListener("click", () => {
+        const next = segment.dataset.segment;
+        if (next === mode) return;
+        if (next === "text") {
+          // PHASE 3: cheap text mode pipeline hook
+          // For now, show the "coming soon" tooltip and revert to Voice.
+          showTooltip(segment, "Coming soon");
+          return;
+        }
+        mode = next;
+        elements.mode.dataset.mode = mode;
+        elements.modeSegments.forEach((s) => {
+          s.setAttribute("aria-selected", String(s.dataset.segment === mode));
+        });
+        elements.voiceWrap.classList.toggle("is-disabled", mode === "text");
+        void persistOverlaySettings();
+      });
+    });
+
+    // Voice picker
+    elements.voiceSelect.addEventListener("change", async () => {
+      const translationVoice = elements.voiceSelect.value;
+      requestedTranslationVoice = translationVoice;
+      if (pageSession) {
+        render(liveSnapshot("Switching voice", {
+          running: true,
+          connecting: true,
+          targetText: ""
+        }));
+      }
+      await pushSettingsToBackground();
+    });
+
+    // Language picker — warm + change
+    for (const eventName of ["pointerdown", "focus", "mouseenter"]) {
+      elements.languageSelect.addEventListener(eventName, () => {
+        warmTranslationLanguages(`language_${eventName}`);
+      });
+    }
+    elements.languageSelect.addEventListener("change", async () => {
+      const targetLanguage = elements.languageSelect.value;
+      requestedTargetLanguage = targetLanguage;
+      warmTranslationLanguages("language_change", targetLanguage);
+      if (pageSession) {
+        render(liveSnapshot("Switching language", {
+          running: true,
+          connecting: true,
+          targetText: "",
+          displayTargetLanguage: targetLanguage
+        }));
+      }
+      await pushSettingsToBackground();
+    });
+
+    // Start button
+    elements.startBtn.addEventListener("click", async () => {
+      elements.startBtn.disabled = true;
+      try {
+        const response = await sendRuntimeMessage({
+          type: "START_TRANSLATION",
+          settings: selectedOverlaySettings()
+        });
+        if (!response?.ok) {
+          throw new Error(response?.error || "Could not start live translation.");
+        }
+        if (response.state) currentState = { ...currentState, ...response.state };
+      } catch (error) {
+        render({
+          ...fallbackState(),
+          ...currentState,
+          running: false,
+          connecting: false,
+          status: error?.message || "Could not start live translation."
+        });
+      } finally {
+        elements.startBtn.disabled = false;
+      }
+    });
+
+    // Stop / Pause buttons
+    elements.stopBtn.addEventListener("click", () => void handleStop());
+    elements.pauseBtn.addEventListener("click", () => void handleStop()); // pause acts as stop in phase 1
+
+    // Hide button — collapse to pill
+    elements.hideBtn.addEventListener("click", () => {
+      collapseToPill();
+    });
+
+    // Close button (idle)
+    elements.closeBtn.addEventListener("click", () => {
+      hideOverlay();
+    });
+
+    // Gear — open / close settings
+    elements.gearBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleSettings();
+    });
+    elements.settingsClose.addEventListener("click", () => closeSettings());
+
+    // Click outside settings closes it
+    document.addEventListener("click", (event) => {
+      if (suppressNextDocumentClick) {
+        suppressNextDocumentClick = false;
+        return;
+      }
+      if (!settingsOpen) return;
+      if (event.target.closest(".lt-settings, [data-lt-gear]")) return;
+      closeSettings();
+    });
+
+    // Transparency popover
+    elements.transparencyBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      popoverOpen = !popoverOpen;
+      elements.popover.classList.toggle("is-open", popoverOpen);
+    });
+    document.addEventListener("click", (event) => {
+      if (!popoverOpen) return;
+      if (event.target.closest("[data-lt-popover], [data-lt-transparency]")) return;
+      popoverOpen = false;
+      elements.popover.classList.remove("is-open");
+    });
+    elements.presetQuickBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setOpacity(Number(btn.dataset.presetQuick));
+        popoverOpen = false;
+        elements.popover.classList.remove("is-open");
+      });
+    });
+
+    // Settings: API key
+    elements.openaiKeyInput.addEventListener("blur", () => {
+      void persistOverlaySettings();
+    });
+    elements.keyToggle.addEventListener("click", () => {
+      const isPassword = elements.openaiKeyInput.type === "password";
+      elements.openaiKeyInput.type = isPassword ? "text" : "password";
+      elements.keyToggle.setAttribute(
+        "aria-label",
+        isPassword ? "Hide key" : "Show key"
+      );
+    });
+
+    // Settings: defaults
+    elements.defaultMode.addEventListener("change", () => {
+      const next = elements.defaultMode.value;
+      if (next === "text") {
+        showTooltip(elements.defaultMode, "Coming soon");
+        elements.defaultMode.value = "voice";
+        return;
+      }
+      mode = next;
+      elements.mode.dataset.mode = mode;
+      elements.modeSegments.forEach((s) => {
+        s.setAttribute("aria-selected", String(s.dataset.segment === mode));
+      });
+      void persistOverlaySettings();
+    });
+    elements.defaultVoice.addEventListener("change", () => {
+      elements.voiceSelect.value = elements.defaultVoice.value;
+      requestedTranslationVoice = elements.defaultVoice.value;
+      void pushSettingsToBackground();
+    });
+    elements.defaultLanguage.addEventListener("change", () => {
+      elements.languageSelect.value = elements.defaultLanguage.value;
+      requestedTargetLanguage = elements.defaultLanguage.value;
+      void pushSettingsToBackground();
+    });
+
+    // Settings: opacity slider
+    elements.opacitySlider.addEventListener("input", () => {
+      setOpacity(Number(elements.opacitySlider.value));
+    });
+    elements.presetBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setOpacity(Number(btn.dataset.preset));
+      });
+    });
+
+    // Settings: bridge
+    elements.bridgeMode.addEventListener("change", () => {
+      elements.bridgeFields.hidden = !elements.bridgeMode.checked;
+      void pushSettingsToBackground();
+    });
+    elements.bridgeToken.addEventListener("blur", () => {
+      void pushSettingsToBackground();
+    });
+
+    // Window resize for layout sanity (none required currently — bar is responsive via CSS)
+  }
+
+  function toggleSettings() {
+    if (settingsOpen) closeSettings();
+    else openSettings();
+  }
+  function openSettings() {
+    settingsOpen = true;
+    suppressNextDocumentClick = true;
+    root.classList.add("is-settings-open");
+  }
+  function closeSettings() {
+    settingsOpen = false;
+    root.classList.remove("is-settings-open");
+  }
+
+  function setOpacity(value) {
+    barOpacity = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    elements.opacitySlider.value = String(barOpacity);
+    elements.opacityValue.textContent = String(barOpacity);
+    applyOpacity();
+    void persistOverlaySettings();
+  }
+
+  function applyOpacity() {
+    if (!root) return;
+    const fraction = barOpacity / 100;
+    root.style.setProperty("--lt-bar-opacity", String(fraction));
+    root.classList.toggle("is-translucent", barOpacity < 100);
+  }
+
+  function showTooltip(anchor, text) {
+    const existing = root.querySelector(".lt-tooltip");
+    if (existing) existing.remove();
+    const tooltip = document.createElement("div");
+    tooltip.className = "lt-tooltip";
+    tooltip.textContent = text;
+    root.appendChild(tooltip);
+    const anchorRect = anchor.getBoundingClientRect();
+    const rootRect = root.getBoundingClientRect();
+    tooltip.style.left = `${anchorRect.left - rootRect.left + anchorRect.width / 2 - tooltip.offsetWidth / 2}px`;
+    tooltip.style.top = `${anchorRect.top - rootRect.top - tooltip.offsetHeight - 6}px`;
+    requestAnimationFrame(() => tooltip.classList.add("is-visible"));
+    setTimeout(() => {
+      tooltip.classList.remove("is-visible");
+      setTimeout(() => tooltip.remove(), 200);
+    }, 1600);
+  }
+
+  async function handleStop() {
+    if (!pageSession && !currentState.running && !currentState.connecting) return;
+    try {
+      await stopPageTranslation("overlay_stop", false);
+      const response = await sendRuntimeMessage({ type: "STOP_TRANSLATION" }).catch(
+        () => null
+      );
+      if (response?.state) currentState = { ...currentState, ...response.state };
+    } catch (error) {
+      trace("overlay.stop_error", { errorMessage: error?.message || null });
+    }
+    if (isHidden) {
+      isHidden = false;
+      pill?.classList.remove("is-visible");
+      if (root) root.hidden = false;
+    }
+  }
+
+  // ===========================================================
+  // Render — translates state into DOM
+  // ===========================================================
   function render(state) {
     createOverlay();
     const { displayTargetLanguage, ...persistedState } = state;
     currentState = { ...currentState, ...persistedState };
     delete currentState.displayTargetLanguage;
     applyAudioMix(currentState);
-    root.hidden = false;
+    if (overlayVisible && !isHidden) {
+      root.hidden = false;
+    }
+
+    const isActive = Boolean(state.running || state.connecting || pageSession);
+    root.classList.toggle("is-active", isActive);
+    root.classList.toggle("is-idle", !isActive);
     root.classList.toggle("is-connecting", Boolean(state.connecting));
-    root.classList.toggle("is-stopped", !state.running && !state.connecting);
-    root.classList.toggle("is-with-source", Boolean(state.showSource));
-    root.classList.toggle("is-side-hidden", Boolean(layout.sideCollapsed) || !state.showSource);
-    elements.status.textContent = emptyText(state.status, "Listening");
-    elements.language.value =
-      requestedTargetLanguage || state.targetLanguage || currentState.targetLanguage || "de";
+
+    // Mode toggle reflects current mode
+    if (elements.mode) {
+      elements.mode.dataset.mode = mode;
+      elements.modeSegments.forEach((s) => {
+        s.setAttribute("aria-selected", String(s.dataset.segment === mode));
+      });
+      elements.voiceWrap.classList.toggle("is-disabled", mode === "text");
+    }
+
+    // Selects reflect current selection
+    const selectedLanguage =
+      requestedTargetLanguage ||
+      state.targetLanguage ||
+      currentState.targetLanguage ||
+      "de";
+    if (elements.languageSelect.value !== selectedLanguage) {
+      elements.languageSelect.value = selectedLanguage;
+    }
     const selectedVoice =
-      requestedTranslationVoice || state.translationVoice || currentState.translationVoice || "marin";
-    elements.voice.value = VOICE_OPTIONS.some(({ id }) => id === selectedVoice)
+      requestedTranslationVoice ||
+      state.translationVoice ||
+      currentState.translationVoice ||
+      "marin";
+    elements.voiceSelect.value = VOICE_OPTIONS.some(({ id }) => id === selectedVoice)
       ? selectedVoice
       : "marin";
-    elements.target.lang = "";
-    elements.target.dir = "auto";
-    elements.startStop.textContent =
-      state.running || state.connecting ? "Stop" : "Start";
-    elements.startStop.disabled = Boolean(state.connecting);
-    renderMainFlow(state);
-    elements.side.hidden = Boolean(layout.sideCollapsed) || !state.showSource;
-    elements.source.hidden = !state.showSource || layout.sideCollapsed;
-    elements.source.textContent = emptyText(state.sourceText, "Waiting for source captions...");
-    elements.history.replaceChildren();
-    elements.history.hidden = true;
-    applyLayout();
+
+    // Captions
+    renderCaptions(state);
   }
 
-  function fallbackState() {
-    return {
-      running: false,
-      connecting: false,
-      status: "Ready",
-      sourceText: "",
-      targetText: "",
-      history: [],
-      backendUrl: "http://127.0.0.1:8799",
-      sourceLanguage: "auto",
-      targetLanguage: "de",
-      translationVoice: "marin",
-      translationMode: "sync",
-      originalVolume: 18,
-      translationVolume: 100,
-      showSource: false
-    };
+  function renderCaptions(state) {
+    if (!elements.captionCurrent) return;
+    const current = normalizeText(state.targetText || currentTargetText);
+    const previous = normalizeText(previousFinalizedTarget);
+
+    if (!current && !previous) {
+      elements.captionPrev.textContent = "";
+      elements.captionCurrent.textContent =
+        state.connecting ? "Listening..." : (pageSession ? "Listening..." : "");
+      elements.captionCurrent.classList.remove("is-streaming");
+      return;
+    }
+
+    elements.captionPrev.textContent = previous && previous !== current ? previous : "";
+    elements.captionCurrent.textContent = current || "";
+    elements.captionCurrent.classList.toggle("is-streaming", isStreaming && !!current);
+
+    const langCode = activeDisplayLanguage(state);
+    elements.captionCurrent.lang = langCode || "";
+    elements.captionCurrent.dir = textDirection(langCode);
+    elements.captionPrev.lang = langCode || "";
+    elements.captionPrev.dir = textDirection(langCode);
   }
 
+  // ===========================================================
+  // Initial state sync
+  // ===========================================================
   async function syncInitialState() {
+    const stored = await chrome.storage.local.get(null);
+    if (stored && typeof stored === "object") {
+      currentState = { ...fallbackState(), ...stored };
+      mode = stored.mode === "text" ? "voice" : (stored.mode || "voice");
+      // PHASE 3: when text mode pipeline lands, restore stored.mode directly.
+      barOpacity = Number.isFinite(Number(stored.barOpacity))
+        ? Number(stored.barOpacity)
+        : 100;
+    } else {
+      currentState = fallbackState();
+    }
+
     const response = await sendRuntimeMessage({ type: "GET_STATE" }).catch(() => null);
-    currentState = { ...fallbackState(), ...(response?.state || {}) };
+    if (response?.state) currentState = { ...currentState, ...response.state };
     syncRequestedControlsFromState(currentState);
-    hideOverlay();
   }
 
+  function applyStoredSettingsToControls() {
+    if (!elements.openaiKeyInput) return;
+    elements.openaiKeyInput.value = currentState.openaiApiKey || "";
+    elements.bridgeMode.checked = currentState.connectionMode === "bridge";
+    elements.bridgeFields.hidden = !elements.bridgeMode.checked;
+    elements.bridgeToken.value = currentState.bridgeToken || "";
+    elements.defaultMode.value = mode;
+    elements.defaultVoice.value = currentState.translationVoice || "marin";
+    elements.defaultLanguage.value = currentState.targetLanguage || "de";
+    elements.opacitySlider.value = String(barOpacity);
+    elements.opacityValue.textContent = String(barOpacity);
+    elements.mode.dataset.mode = mode;
+    elements.modeSegments.forEach((s) => {
+      s.setAttribute("aria-selected", String(s.dataset.segment === mode));
+    });
+    elements.voiceWrap.classList.toggle("is-disabled", mode === "text");
+    elements.languageSelect.value = currentState.targetLanguage || "de";
+    elements.voiceSelect.value = currentState.translationVoice || "marin";
+    applyOpacity();
+  }
+
+  // ===========================================================
+  // Background message handlers
+  // ===========================================================
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "CONTENT_PING") {
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (message?.type === "TOGGLE_BAR") {
+      createOverlay();
+      applyStoredSettingsToControls();
+      if (isHidden) {
+        expandFromPill();
+      } else if (overlayVisible && !root.hidden) {
+        hideOverlay();
+      } else {
+        showOverlay();
+      }
       sendResponse({ ok: true });
       return false;
     }
@@ -1481,13 +1679,12 @@
     if (message?.type === "CONTENT_UPDATE") {
       const nextState = { ...currentState, ...(message.state || {}) };
       currentState = nextState;
-      if (!pageSession || !nextState.connecting) syncRequestedControlsFromState(nextState);
-      if (overlayActivated || root) {
-        if (!nextState.running && !nextState.connecting) {
-          hideOverlay();
-        } else {
-          render(nextState);
-        }
+      if (!pageSession || !nextState.connecting) {
+        syncRequestedControlsFromState(nextState);
+      }
+      if (overlayVisible || root) {
+        if (!root) createOverlay();
+        if (!isHidden) render(nextState);
       }
       sendResponse({ ok: true });
       return false;
@@ -1516,8 +1713,12 @@
       (async () => {
         try {
           const nextSettings = message.settings || {};
-          if (nextSettings.targetLanguage) requestedTargetLanguage = nextSettings.targetLanguage;
-          if (nextSettings.translationVoice) requestedTranslationVoice = nextSettings.translationVoice;
+          if (nextSettings.targetLanguage) {
+            requestedTargetLanguage = nextSettings.targetLanguage;
+          }
+          if (nextSettings.translationVoice) {
+            requestedTranslationVoice = nextSettings.translationVoice;
+          }
           const previousLanguage = activeTargetLanguage || currentState.targetLanguage;
           const previousVoice = activeTranslationVoice || currentState.translationVoice;
           const previousMode = activeTranslationMode || currentState.translationMode;
@@ -1532,7 +1733,6 @@
             nextSettings.translationMode !== previousMode;
 
           if (pageSession && (languageChanged || voiceChanged || modeChanged)) {
-            addHistoryTurn(previousLanguage);
             const nextLanguageName =
               LANGUAGE_NAMES[nextSettings.targetLanguage] ||
               nextSettings.targetLanguage ||
@@ -1599,5 +1799,13 @@
     return false;
   });
 
-  void syncInitialState();
+  // Boot
+  (async () => {
+    await syncInitialState();
+    // Build the overlay DOM eagerly so applyStoredSettingsToControls works
+    createOverlay();
+    applyStoredSettingsToControls();
+    // Stay hidden until user clicks the toolbar icon.
+    hideOverlay();
+  })();
 })();

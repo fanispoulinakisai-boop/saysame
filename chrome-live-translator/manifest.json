@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Sotto Live Interpreter",
   "description": "Hear live video translation with spoken audio and captions.",
-  "version": "0.1.26",
+  "version": "0.2.0",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
@@ -38,7 +38,6 @@
     "128": "assets/icons/icon-128.png"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "Sotto",
     "default_icon": {
       "16": "assets/icons/icon-16.png",

@@ -914,3 +914,77 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   });
   void stopTranslation();
 });
+
+async function showUnsupportedNotice(tab) {
+  if (!tab?.id) {
+    return;
+  }
+  // The tab may be a chrome:// or other restricted URL where scripting isn't allowed.
+  // Try to inject a transient toast; if blocked, fall back to a chrome notification.
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const existing = document.getElementById("__sotto-toast");
+        if (existing) existing.remove();
+        const toast = document.createElement("div");
+        toast.id = "__sotto-toast";
+        toast.textContent =
+          "Sotto works on YouTube, Bilibili, TikTok, X, Vimeo, Twitch, Xiaohongshu, Douyin and Weibo. Open one of those to start.";
+        Object.assign(toast.style, {
+          position: "fixed",
+          left: "50%",
+          bottom: "32px",
+          transform: "translateX(-50%)",
+          zIndex: "2147483647",
+          maxWidth: "520px",
+          padding: "14px 22px",
+          borderRadius: "12px",
+          background: "rgba(11,12,10,0.94)",
+          color: "#F4F1E8",
+          font: "500 14px/1.4 -apple-system, BlinkMacSystemFont, system-ui, sans-serif",
+          boxShadow: "0 12px 40px rgba(0,0,0,0.45)",
+          opacity: "0",
+          transition: "opacity 200ms ease-out",
+          pointerEvents: "none"
+        });
+        document.documentElement.append(toast);
+        requestAnimationFrame(() => {
+          toast.style.opacity = "1";
+        });
+        setTimeout(() => {
+          toast.style.opacity = "0";
+          setTimeout(() => toast.remove(), 220);
+        }, 4200);
+      }
+    });
+  } catch (error) {
+    trace("action.unsupported_notice_failed", {
+      tabId: tab.id,
+      url: tab.url,
+      errorMessage: error?.message || null
+    });
+  }
+}
+
+chrome.action.onClicked.addListener(async (tab) => {
+  trace("action.icon_clicked", {
+    tabId: tab?.id || null,
+    url: tab?.url || null
+  });
+
+  if (!tab?.id || !supportedUrl(tab.url)) {
+    await showUnsupportedNotice(tab);
+    return;
+  }
+
+  try {
+    await ensureContentScript(tab.id);
+    await tabMessage(tab.id, { type: "TOGGLE_BAR" });
+  } catch (error) {
+    trace("action.toggle_failed", {
+      tabId: tab.id,
+      errorMessage: error?.message || null
+    });
+  }
+});
