@@ -34,7 +34,7 @@
   position: fixed;
   z-index: 2147483647;
   left: 50%;
-  bottom: 16px;
+  bottom: 96px;
   transform: translateX(-50%);
   width: calc(100vw - 32px);
   max-width: 880px;
@@ -112,6 +112,13 @@
 }
 
 .lt-strip:active {
+  cursor: grabbing;
+}
+
+.lt-root.is-dragging {
+  user-select: none;
+}
+.lt-root.is-dragging .lt-strip {
   cursor: grabbing;
 }
 

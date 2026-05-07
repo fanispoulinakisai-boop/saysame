@@ -120,7 +120,7 @@
   let isStreaming = false;
   let settingsOpen = false;
   let popoverOpen = false;
-  let suppressNextDocumentClick = false;
+  let dragState = null;
 
   // ===========================================================
   // Helpers
@@ -940,6 +940,22 @@
     root.className = "lt-root is-idle";
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", "Sotto live translator");
+
+    // Restore saved bar position if present
+    try {
+      void chrome.storage.local.get(["barPosition"]).then((stored) => {
+        const pos = stored?.barPosition;
+        if (!root || !pos || typeof pos.left !== "number" || typeof pos.top !== "number") return;
+        const margin = 8;
+        const left = Math.max(margin, Math.min(window.innerWidth - 100, pos.left));
+        const top = Math.max(margin, Math.min(window.innerHeight - 60, pos.top));
+        root.style.left = `${left}px`;
+        root.style.top = `${top}px`;
+        root.style.right = "auto";
+        root.style.bottom = "auto";
+        root.style.transform = "none";
+      }).catch(() => {});
+    } catch {}
     root.innerHTML = `
       <div class="lt-panel">
         <div class="lt-settings" data-lt-settings>
@@ -1377,20 +1393,21 @@
     // Gear — open / close settings
     elements.gearBtn.addEventListener("click", (event) => {
       event.stopPropagation();
+      event.preventDefault();
       toggleSettings();
     });
-    elements.settingsClose.addEventListener("click", () => closeSettings());
+    elements.settingsClose.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeSettings();
+    });
 
-    // Click outside settings closes it
-    document.addEventListener("click", (event) => {
-      if (suppressNextDocumentClick) {
-        suppressNextDocumentClick = false;
-        return;
-      }
+    // Click outside settings closes it (use mousedown so it runs before
+    // the gear's click handler can re-open if user clicks the gear again)
+    document.addEventListener("mousedown", (event) => {
       if (!settingsOpen) return;
       if (event.target.closest(".lt-settings, [data-lt-gear]")) return;
       closeSettings();
-    });
+    }, true);
 
     // Transparency popover
     elements.transparencyBtn.addEventListener("click", (event) => {
@@ -1470,7 +1487,58 @@
       void pushSettingsToBackground();
     });
 
-    // Window resize for layout sanity (none required currently — bar is responsive via CSS)
+    // Drag-to-move: any pointerdown on the strip that didn't hit a control
+    // (controls have .lt-no-drag) starts a drag. We translate the bar by
+    // adjusting `left` and `bottom` directly on root.style.
+    elements.strip.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      if (event.target.closest(".lt-no-drag, button, select, input, .lt-popover, .lt-settings")) return;
+
+      const rect = root.getBoundingClientRect();
+      dragState = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originLeft: rect.left,
+        originTop: rect.top,
+        width: rect.width,
+        height: rect.height
+      };
+      try { elements.strip.setPointerCapture(event.pointerId); } catch {}
+      root.classList.add("is-dragging");
+      event.preventDefault();
+    });
+
+    elements.strip.addEventListener("pointermove", (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      const dx = event.clientX - dragState.startX;
+      const dy = event.clientY - dragState.startY;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const margin = 8;
+      const newLeft = Math.max(margin, Math.min(vw - dragState.width - margin, dragState.originLeft + dx));
+      const newTop = Math.max(margin, Math.min(vh - dragState.height - margin, dragState.originTop + dy));
+      root.style.left = `${newLeft}px`;
+      root.style.top = `${newTop}px`;
+      root.style.right = "auto";
+      root.style.bottom = "auto";
+      root.style.transform = "none";
+    });
+
+    const endDrag = (event) => {
+      if (!dragState || event.pointerId !== dragState.pointerId) return;
+      try { elements.strip.releasePointerCapture(event.pointerId); } catch {}
+      dragState = null;
+      root.classList.remove("is-dragging");
+      try {
+        const rect = root.getBoundingClientRect();
+        void chrome.storage.local.set({
+          barPosition: { left: rect.left, top: rect.top }
+        });
+      } catch {}
+    };
+    elements.strip.addEventListener("pointerup", endDrag);
+    elements.strip.addEventListener("pointercancel", endDrag);
   }
 
   function toggleSettings() {
@@ -1479,7 +1547,6 @@
   }
   function openSettings() {
     settingsOpen = true;
-    suppressNextDocumentClick = true;
     root.classList.add("is-settings-open");
   }
   function closeSettings() {
