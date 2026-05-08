@@ -143,15 +143,20 @@
 @container ltbar (max-width: 640px) {
   .lt-strip { padding: 0 8px; gap: 6px; }
   .lt-mode-segment span:not([aria-hidden="true"]) { display: none; }
-  /* When text labels hide, mode segments stop fighting for space —
-     become tight icon buttons matching the voice/lang icons. */
-  .lt-mode-segment {
+  /* Higher specificity (.lt-mode .lt-mode-segment vs plain
+     .lt-mode-segment) so this beats the default rule that comes
+     later in the file. */
+  .lt-mode .lt-mode-segment {
     flex: 0 0 auto;
     padding: 0;
     width: 32px;
     height: 28px;
     gap: 0;
   }
+  /* CRITICAL: .lt-mode has hardcoded width:180px in the default
+     rule. Without overriding, the parent stays wide regardless of
+     how small we make the segments. */
+  .lt-strip .lt-mode { width: auto; padding: 1px; }
   .lt-ticker .lt-ticker-time,
   .lt-ticker .lt-ticker-sep { display: none; }
   .lt-wordmark { display: none; }
@@ -200,7 +205,7 @@
     line-height: 1;
     pointer-events: none;
   }
-  [data-lt-voice-wrap]::before { content: "🎙"; }
+  [data-lt-voice-wrap]::before { content: "👤"; }
   [data-lt-language-wrap]::before { content: attr(data-flag); }
 
   /* Tiny extra breathing room when both icons are adjacent so they

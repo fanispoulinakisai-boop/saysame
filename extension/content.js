@@ -1977,10 +1977,10 @@
         // Width changes (sides + corners). Bar is centered, so each
         // pixel of pointer travel changes width by 2 (both sides shift).
         if (mode === "e" || mode === "se") {
-          const w = Math.max(320, Math.min(window.innerWidth - 16, resizeState.originWidth + dx * 2));
+          const w = Math.max(380, Math.min(window.innerWidth - 16, resizeState.originWidth + dx * 2));
           root.style.setProperty("--lt-bar-width", `${w}px`);
         } else if (mode === "w" || mode === "sw") {
-          const w = Math.max(320, Math.min(window.innerWidth - 16, resizeState.originWidth - dx * 2));
+          const w = Math.max(380, Math.min(window.innerWidth - 16, resizeState.originWidth - dx * 2));
           root.style.setProperty("--lt-bar-width", `${w}px`);
         }
         // Captions height changes (bottom edge + bottom corners).
@@ -2022,7 +2022,7 @@
         const widthVar = parseFloat(root.style.getPropertyValue("--lt-bar-width")) || 880;
         const maxWidth = window.innerWidth - 16;
         if (widthVar > maxWidth) {
-          root.style.setProperty("--lt-bar-width", `${Math.max(320, maxWidth)}px`);
+          root.style.setProperty("--lt-bar-width", `${Math.max(380, maxWidth)}px`);
         }
         // Clamp position if user had previously dragged it.
         const rect = root.getBoundingClientRect();
