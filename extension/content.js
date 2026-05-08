@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.3.0"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.3.1"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -532,17 +532,11 @@
   // SaySame's own internal writes (e.g. applyAudioMix forcing
   // 1.0 on session start) bypass the hijack via setEngineVolumeRaw.
 
-  const ORIGINAL_VOLUME_PROTO_DESC = (() => {
-    let proto = HTMLMediaElement?.prototype;
-    while (proto && !Object.getOwnPropertyDescriptor(proto, "volume")) {
-      proto = Object.getPrototypeOf(proto);
-    }
-    return proto ? Object.getOwnPropertyDescriptor(proto, "volume") : null;
-  })();
-
-  // Per-video state: { ownDesc, displayedVolume }
+  // Per-video state: { protoDesc, ownDesc, displayedVolume }
+  // protoDesc = the prototype-level volume descriptor we use to
+  //   bypass our own hijack and write directly to the audio engine.
   // ownDesc = whatever was on the element BEFORE we hijacked
-  // (usually undefined, meaning the prototype property).
+  //   (usually undefined, meaning the prototype property).
   const hijackState = new WeakMap();
 
   // When true, our own volumechange listener short-circuits.
@@ -550,17 +544,41 @@
   // don't recurse or double-process events that came from us.
   let suppressVolumeChangeListener = false;
 
+  function findVolumeProtoDescriptor(video) {
+    // Walk the actual instance's prototype chain — robust against
+    // Chrome's isolated-world quirks where HTMLMediaElement.prototype
+    // accessed via the global may differ from what the instance
+    // actually inherits from.
+    let proto = Object.getPrototypeOf(video);
+    let depth = 0;
+    while (proto && depth < 10) {
+      const desc = Object.getOwnPropertyDescriptor(proto, "volume");
+      if (desc && typeof desc.set === "function") return desc;
+      proto = Object.getPrototypeOf(proto);
+      depth++;
+    }
+    return null;
+  }
+
   function setEngineVolumeRaw(video, value) {
-    // Bypass our hijack: write directly to the underlying
-    // HTMLMediaElement.prototype.volume setter.
-    if (!ORIGINAL_VOLUME_PROTO_DESC?.set || !video) return;
+    if (!video) return;
+    const state = hijackState.get(video);
+    const desc = state?.protoDesc || findVolumeProtoDescriptor(video);
+    if (!desc?.set) return;
     suppressVolumeChangeListener = true;
     try {
-      ORIGINAL_VOLUME_PROTO_DESC.set.call(video, value);
+      desc.set.call(video, value);
     } catch {}
     finally {
       suppressVolumeChangeListener = false;
     }
+  }
+
+  function getEngineVolumeRaw(video) {
+    const state = hijackState.get(video);
+    const desc = state?.protoDesc || findVolumeProtoDescriptor(video);
+    if (!desc?.get) return null;
+    try { return desc.get.call(video); } catch { return null; }
   }
 
   function dispatchSyntheticVolumeChange(video) {
@@ -577,48 +595,65 @@
   }
 
   function installVolumeHijack(video) {
-    if (!video || !ORIGINAL_VOLUME_PROTO_DESC?.set) return;
-    if (hijackState.has(video)) return; // already installed
+    // Diagnostic stamps so we can observe what happened from
+    // page-world JS via documentElement.dataset.
+    const diag = (k, v) => {
+      try { document.documentElement.dataset["saysameHijack" + k] = String(v); } catch {}
+    };
+    diag("Called", "1");
+    if (!video) { diag("Result", "no-video"); return; }
+    if (hijackState.has(video)) { diag("Result", "already-installed"); return; }
+
+    const protoDesc = findVolumeProtoDescriptor(video);
+    if (!protoDesc) { diag("Result", "no-proto-desc"); return; }
+    diag("ProtoDescOk", "1");
 
     const ownDesc = Object.getOwnPropertyDescriptor(video, "volume");
-    // Capture the user's current intended level — read via the
-    // existing path (might be the prototype getter).
-    const initialDisplayed = (() => {
-      try { return Number(video.volume); } catch { return 1.0; }
+    const initialEngine = (() => {
+      try { return Number(protoDesc.get.call(video)); } catch { return 1.0; }
     })();
     const state = {
+      protoDesc,
       ownDesc,
-      displayedVolume: Number.isFinite(initialDisplayed)
-        ? Math.max(0, Math.min(1, initialDisplayed))
+      displayedVolume: Number.isFinite(initialEngine)
+        ? Math.max(0, Math.min(1, initialEngine))
         : 1.0
     };
     hijackState.set(video, state);
+    diag("DisplayedInit", state.displayedVolume.toFixed(3));
 
     // Force engine volume to 1.0 so capture path is full strength
     // from the moment the hijack is in place.
     setEngineVolumeRaw(video, 1.0);
+    diag("EngineForced", "1.0");
 
-    Object.defineProperty(video, "volume", {
-      configurable: true,
-      enumerable: true,
-      get() {
-        const s = hijackState.get(video);
-        return s ? s.displayedVolume : 1.0;
-      },
-      set(value) {
-        const s = hijackState.get(video);
-        if (!s) return;
-        const clamped = Math.max(0, Math.min(1, Number(value) || 0));
-        s.displayedVolume = clamped;
-        // Redirect: feed user's intended level into the playback
-        // gain node + SaySame's slider UI.
-        redirectExternalVolumeToPlayback(clamped);
-        // Engine stays pinned at 1.0 so capture path is unaffected.
-        setEngineVolumeRaw(video, 1.0);
-        // Tell external listeners (YouTube's UI) to re-render.
-        dispatchSyntheticVolumeChange(video);
-      }
-    });
+    try {
+      Object.defineProperty(video, "volume", {
+        configurable: true,
+        enumerable: true,
+        get() {
+          const s = hijackState.get(video);
+          return s ? s.displayedVolume : 1.0;
+        },
+        set(value) {
+          const s = hijackState.get(video);
+          if (!s) return;
+          const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+          s.displayedVolume = clamped;
+          // Redirect: feed user's intended level into the playback
+          // gain node + SaySame's slider UI.
+          redirectExternalVolumeToPlayback(clamped);
+          // Engine stays pinned at 1.0 so capture path is unaffected.
+          setEngineVolumeRaw(video, 1.0);
+          // Tell external listeners (YouTube's UI) to re-render.
+          dispatchSyntheticVolumeChange(video);
+        }
+      });
+      diag("Result", "installed");
+    } catch (e) {
+      diag("Result", "defineProperty-threw:" + (e?.message || "unknown"));
+      hijackState.delete(video);
+    }
   }
 
   function removeVolumeHijack(video) {
