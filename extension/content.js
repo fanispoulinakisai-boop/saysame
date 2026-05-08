@@ -473,11 +473,16 @@
       dest,
       capturedStream: dest.stream
     };
+    // Lock down video.volume so external sliders (YouTube's
+    // native one) can't attenuate the capture path. See big
+    // comment block above the hijack helpers.
+    installVolumeHijack(video);
     return audioPipeline;
   }
 
   function tearDownAudioPipeline() {
     if (!audioPipeline) return;
+    removeVolumeHijack(audioPipeline.video);
     try { audioPipeline.source.disconnect(); } catch {}
     try { audioPipeline.playbackGain.disconnect(); } catch {}
     try { audioPipeline.captureGain.disconnect(); } catch {}
@@ -491,6 +496,176 @@
     const clamped = Math.max(0, Math.min(1, value0to1));
     audioPipeline.playbackGain.gain.value = clamped;
   }
+
+  // ============================================================
+  // video.volume PROPERTY HIJACK
+  // ============================================================
+  // The bug we're solving: in Chromium, lowering `video.volume`
+  // (e.g. via YouTube's player slider) ALSO attenuates the audio
+  // tapped by `MediaElementAudioSourceNode` — even though our
+  // captureGain is locked at 1.0. Net effect: OpenAI receives
+  // quiet/garbled input whenever the user touches YouTube's
+  // native slider. Snap-back-via-volumechange races this and only
+  // helps slightly; previous attempt to use `video.muted = true`
+  // killed capture entirely (Chromium silences the source tap on
+  // mute, contrary to spec).
+  //
+  // The fix: while a translation pipeline is active, we replace
+  // the video element's `volume` property with our own getter/
+  // setter. Any external attempt to set `video.volume = X`:
+  //   1. is REDIRECTED into our Web Audio playbackGain (so the
+  //      user perceives the volume change they intended),
+  //   2. updates SaySame's "Original video volume" slider so the
+  //      two stay in sync,
+  //   3. quietly forces the underlying engine value back to 1.0
+  //      so capture stays at full strength.
+  // The getter returns the last value the external setter "saw",
+  // so YouTube's player UI keeps showing the user's chosen %.
+  //
+  // We dispatch a synthetic `volumechange` after each set so
+  // YouTube's UI listener re-renders the slider visually.
+  //
+  // SaySame's own internal writes (e.g. applyAudioMix forcing
+  // 1.0 on session start) bypass the hijack via setEngineVolumeRaw.
+
+  const ORIGINAL_VOLUME_PROTO_DESC = (() => {
+    let proto = HTMLMediaElement?.prototype;
+    while (proto && !Object.getOwnPropertyDescriptor(proto, "volume")) {
+      proto = Object.getPrototypeOf(proto);
+    }
+    return proto ? Object.getOwnPropertyDescriptor(proto, "volume") : null;
+  })();
+
+  // Per-video state: { ownDesc, displayedVolume }
+  // ownDesc = whatever was on the element BEFORE we hijacked
+  // (usually undefined, meaning the prototype property).
+  const hijackState = new WeakMap();
+
+  // When true, our own volumechange listener short-circuits.
+  // Set during internal resets and synthetic dispatches so we
+  // don't recurse or double-process events that came from us.
+  let suppressVolumeChangeListener = false;
+
+  function setEngineVolumeRaw(video, value) {
+    // Bypass our hijack: write directly to the underlying
+    // HTMLMediaElement.prototype.volume setter.
+    if (!ORIGINAL_VOLUME_PROTO_DESC?.set || !video) return;
+    suppressVolumeChangeListener = true;
+    try {
+      ORIGINAL_VOLUME_PROTO_DESC.set.call(video, value);
+    } catch {}
+    finally {
+      suppressVolumeChangeListener = false;
+    }
+  }
+
+  function dispatchSyntheticVolumeChange(video) {
+    // Fire volumechange so YouTube's UI listener re-renders its
+    // slider against our (lied-about) getter value. Suppress our
+    // own listener for this synthetic event.
+    suppressVolumeChangeListener = true;
+    try {
+      video.dispatchEvent(new Event("volumechange"));
+    } catch {}
+    finally {
+      suppressVolumeChangeListener = false;
+    }
+  }
+
+  function installVolumeHijack(video) {
+    if (!video || !ORIGINAL_VOLUME_PROTO_DESC?.set) return;
+    if (hijackState.has(video)) return; // already installed
+
+    const ownDesc = Object.getOwnPropertyDescriptor(video, "volume");
+    // Capture the user's current intended level — read via the
+    // existing path (might be the prototype getter).
+    const initialDisplayed = (() => {
+      try { return Number(video.volume); } catch { return 1.0; }
+    })();
+    const state = {
+      ownDesc,
+      displayedVolume: Number.isFinite(initialDisplayed)
+        ? Math.max(0, Math.min(1, initialDisplayed))
+        : 1.0
+    };
+    hijackState.set(video, state);
+
+    // Force engine volume to 1.0 so capture path is full strength
+    // from the moment the hijack is in place.
+    setEngineVolumeRaw(video, 1.0);
+
+    Object.defineProperty(video, "volume", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        const s = hijackState.get(video);
+        return s ? s.displayedVolume : 1.0;
+      },
+      set(value) {
+        const s = hijackState.get(video);
+        if (!s) return;
+        const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+        s.displayedVolume = clamped;
+        // Redirect: feed user's intended level into the playback
+        // gain node + SaySame's slider UI.
+        redirectExternalVolumeToPlayback(clamped);
+        // Engine stays pinned at 1.0 so capture path is unaffected.
+        setEngineVolumeRaw(video, 1.0);
+        // Tell external listeners (YouTube's UI) to re-render.
+        dispatchSyntheticVolumeChange(video);
+      }
+    });
+  }
+
+  function removeVolumeHijack(video) {
+    if (!video) return;
+    const state = hijackState.get(video);
+    if (!state) return;
+    try {
+      if (state.ownDesc) {
+        Object.defineProperty(video, "volume", state.ownDesc);
+      } else {
+        // Was using the prototype getter/setter — delete to fall
+        // back through the prototype chain.
+        delete video.volume;
+      }
+    } catch {}
+    hijackState.delete(video);
+  }
+
+  function redirectExternalVolumeToPlayback(ratio) {
+    // External code (e.g. YouTube) just tried to set video.volume
+    // to `ratio`. Apply that to playback gain so user hears it,
+    // and update SaySame's slider so the UI mirrors.
+    if (!audioPipeline) return;
+    const value0to100 = Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+    setPipelinePlaybackGain(ratio);
+    if (root && elements?.originalVolumeSlider) {
+      elements.originalVolumeSlider.value = String(value0to100);
+      if (elements.originalVolumeValueLabel) {
+        elements.originalVolumeValueLabel.textContent = String(value0to100);
+      }
+    }
+    currentState = { ...currentState, originalVolume: value0to100 };
+    try { void chrome.storage.local.set({ originalVolume: value0to100 }); } catch {}
+  }
+
+  function syncSaysameSliderToExternal(value0to100) {
+    // SaySame's own slider just changed. Update our hijack's
+    // displayedVolume + dispatch a volumechange so YouTube's UI
+    // listener mirrors the new value visually.
+    if (!audioPipeline) return;
+    const video = audioPipeline.video;
+    const state = hijackState.get(video);
+    if (!state) return;
+    const ratio = Math.max(0, Math.min(1, (Number(value0to100) || 0) / 100));
+    state.displayedVolume = ratio;
+    dispatchSyntheticVolumeChange(video);
+  }
+
+  // ============================================================
+  // END video.volume PROPERTY HIJACK
+  // ============================================================
 
   async function capturedVideoStream(video, timeoutMs = 9000) {
     // Make sure the video is actually playing — Web Audio source
@@ -538,11 +713,23 @@
       if (audioPipeline) {
         // Pipeline is active — control PLAYBACK volume only. Capture
         // path stays at unity gain so OpenAI always gets clean audio.
-        // Force video.volume = 1.0 + muted=false so the WebAudio
-        // source has full-strength audio to work with.
-        video.volume = 1.0;
-        video.muted = false;
+        // The video.volume hijack already keeps the engine pinned at
+        // 1.0; we use setEngineVolumeRaw here as a belt-and-braces
+        // assertion that bypasses the hijack (otherwise we'd corrupt
+        // displayedVolume and the playback gain we're about to set).
+        setEngineVolumeRaw(video, 1.0);
+        if (video.muted) video.muted = false;
         setPipelinePlaybackGain(originalVolume);
+        // Keep the hijack's "displayed" value (what YouTube's UI
+        // reads) and external listeners in sync with SaySame's
+        // authoritative volume — so YouTube's native slider visually
+        // mirrors SaySame's at session start and on every internal
+        // mix update.
+        const hjs = hijackState.get(video);
+        if (hjs) {
+          hjs.displayedVolume = Math.max(0, Math.min(1, originalVolume));
+          dispatchSyntheticVolumeChange(video);
+        }
       } else {
         // No pipeline yet (idle or text-mode-only state). Fall back
         // to native video.volume so user's slider isn't silently dead.
@@ -1883,6 +2070,10 @@
       elements.originalVolumeValueLabel.textContent = String(v);
       currentState = { ...currentState, originalVolume: v };
       applyAudioMix({ ...overlaySettings(), originalVolume: v }, { remote: false });
+      // During an active session, also update the hijack's
+      // displayedVolume + nudge YouTube's UI listener so its
+      // native slider visually mirrors ours.
+      syncSaysameSliderToExternal(v);
       void persistOverlaySettings();
     });
     elements.translationVolumeSlider.addEventListener("input", () => {
@@ -2519,16 +2710,21 @@
     if (!v || v === lastObservedVideo) return;
     lastObservedVideo = v;
     v.addEventListener("volumechange", () => {
+      // Skip events we triggered ourselves — internal resets, the
+      // synthetic volumechange we dispatch from the hijack so
+      // YouTube's UI re-renders, etc. The hijack has already done
+      // the right thing for those.
+      if (suppressVolumeChangeListener) return;
       if (!root || !elements?.originalVolumeSlider) return;
       const observed = Math.round((v.muted ? 0 : v.volume) * 100);
-      // Pipeline active → user controls volume only via our slider.
-      // Snap video.volume back to 1.0 so captureGain (unity) keeps
-      // sending full-strength audio to OpenAI, and ignore the event
-      // (no state mutation, no slider sync, no storage write).
+      // Pipeline active → the volume property hijack is in charge.
+      // Most "external" volume changes are intercepted before they
+      // reach this listener, but if something bypasses the property
+      // setter (e.g. a hard mute via keyboard shortcut), unmute as
+      // a safety net. No slider sync here; the hijack already did it.
       if (audioPipeline) {
-        if (observed !== 100 || v.muted) {
-          v.volume = 1.0;
-          if (v.muted) v.muted = false;
+        if (v.muted) {
+          v.muted = false;
         }
         return;
       }
