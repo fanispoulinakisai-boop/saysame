@@ -430,12 +430,97 @@
   }
 
   // Web Audio pipeline: decouples PLAYBACK volume (what user hears)
-  // from CAPTURE volume (what OpenAI receives). With the old approach
-  // (video.captureStream), lowering video.volume also lowered the
-  // captured audio → OpenAI got quiet input → translation degraded.
-  // Now: capture path is fixed at unity gain; only the playback gain
-  // node responds to the user's "Original video volume" slider.
+  // from CAPTURE volume (what OpenAI receives).
+  //
+  // The bulletproof decoupling strategy (after multiple attempts):
+  //   1. While the pipeline is active, video.muted = true. The native
+  //      audio path of the <video> element is silenced. Per W3C spec,
+  //      muted does NOT affect MediaElementAudioSourceNode — the source
+  //      node taps before the muted/volume stage. So our pipeline still
+  //      receives full-strength audio.
+  //   2. We HIJACK video.volume's setter via Object.defineProperty so
+  //      that any code (YouTube's native slider, the player chrome's
+  //      auto-restore on init, third-party extensions, ad transitions)
+  //      attempting to set video.volume to anything other than 1.0
+  //      silently no-ops. This is critical because in practice some
+  //      Chromium builds DO let video.volume scale the captured-stream
+  //      output (contrary to spec), and YouTube's slider only directly
+  //      mutates video.volume — there is no other lever.
+  //   3. The user's "Original video volume" slider in our overlay is
+  //      the ONLY way to change what the user hears during a session.
+  //      It writes to audioPipeline.playbackGain (Web Audio gain node).
+  //
+  // When the pipeline tears down, the descriptor is restored and
+  // video.volume / video.muted return to normal page-controlled
+  // behaviour.
   let audioPipeline = null;
+  // Saved descriptors so we can restore native behaviour on teardown.
+  let videoVolumeDescriptor = null;
+  let videoMutedDescriptor = null;
+  // Status hint flag — true once we've nudged the user with the
+  // "YouTube's slider is bypassed" message, so we don't spam them.
+  let userNotifiedAboutBypass = false;
+
+  function findDescriptorOnChain(obj, prop) {
+    let p = obj;
+    for (let i = 0; i < 8 && p; i++) {
+      p = Object.getPrototypeOf(p);
+      if (!p) break;
+      const d = Object.getOwnPropertyDescriptor(p, prop);
+      if (d && d.get && d.set) return d;
+    }
+    return null;
+  }
+
+  function lockVideoNativeAudio(video) {
+    if (!video) return;
+    // Save originals once so we can restore later. The volume / muted
+    // accessors live on HTMLMediaElement.prototype, NOT the immediate
+    // prototype of <video> (which is HTMLVideoElement) — walk the chain.
+    if (!videoVolumeDescriptor) {
+      videoVolumeDescriptor = findDescriptorOnChain(video, "volume");
+      videoMutedDescriptor = findDescriptorOnChain(video, "muted");
+    }
+    if (!videoVolumeDescriptor || !videoMutedDescriptor) return;
+    // Force the underlying state once so it starts in the right place.
+    try { videoVolumeDescriptor.set.call(video, 1.0); } catch {}
+    try { videoMutedDescriptor.set.call(video, true); } catch {}
+    // Hijack: any future write to video.volume is silently ignored.
+    // Reads return 1.0 so YouTube's slider UI thinks volume is full.
+    // video.muted reads return true (audio output silenced); writes
+    // are also ignored so the player can't unmute behind us.
+    try {
+      Object.defineProperty(video, "volume", {
+        configurable: true,
+        get() { return 1.0; },
+        set(_v) {
+          // Notify the user once that their native slider is bypassed.
+          if (!userNotifiedAboutBypass && audioPipeline) {
+            userNotifiedAboutBypass = true;
+            try {
+              notifyLive("Use SaySame's volume slider — YouTube's is bypassed during translation");
+            } catch {}
+          }
+          /* swallow */
+        }
+      });
+      Object.defineProperty(video, "muted", {
+        configurable: true,
+        get() { return true; },
+        set(_v) { /* swallow — pipeline owns audibility */ }
+      });
+    } catch {}
+  }
+
+  function unlockVideoNativeAudio(video) {
+    if (!video || !videoVolumeDescriptor || !videoMutedDescriptor) return;
+    try { delete video.volume; } catch {}
+    try { delete video.muted; } catch {}
+    // Restore sensible defaults: full volume, unmuted, so the user's
+    // YouTube slider works again the next time they touch it.
+    try { videoVolumeDescriptor.set.call(video, 1.0); } catch {}
+    try { videoMutedDescriptor.set.call(video, false); } catch {}
+  }
 
   function setupAudioPipeline(video) {
     if (audioPipeline?.video === video) return audioPipeline;
@@ -473,17 +558,26 @@
       dest,
       capturedStream: dest.stream
     };
+    // Lock native video audio path: muted=true silences the element's
+    // own output (Web Audio is now the only audible path) and the
+    // volume setter is hijacked so YouTube's slider can't degrade
+    // capture audio anymore.
+    lockVideoNativeAudio(video);
+    userNotifiedAboutBypass = false;
     return audioPipeline;
   }
 
   function tearDownAudioPipeline() {
     if (!audioPipeline) return;
+    const video = audioPipeline.video;
     try { audioPipeline.source.disconnect(); } catch {}
     try { audioPipeline.playbackGain.disconnect(); } catch {}
     try { audioPipeline.captureGain.disconnect(); } catch {}
     try { audioPipeline.dest.disconnect(); } catch {}
     try { audioPipeline.ctx.close(); } catch {}
     audioPipeline = null;
+    unlockVideoNativeAudio(video);
+    userNotifiedAboutBypass = false;
   }
 
   function setPipelinePlaybackGain(value0to1) {
@@ -536,16 +630,14 @@
 
     if (video) {
       if (audioPipeline) {
-        // Pipeline is active — control PLAYBACK volume only. Capture
-        // path stays at unity gain so OpenAI always gets clean audio.
-        // Force video.volume = 1.0 + muted=false so the WebAudio
-        // source has full-strength audio to work with.
-        video.volume = 1.0;
-        video.muted = false;
+        // Pipeline active — Web Audio is the only audible path. The
+        // descriptor lock keeps video.muted=true and video.volume=1.0
+        // no matter what YouTube/the user does to the native slider.
+        // Our slider only moves the playback gain node.
         setPipelinePlaybackGain(originalVolume);
       } else {
-        // No pipeline yet (idle or text-mode-only state). Fall back
-        // to native video.volume so user's slider isn't silently dead.
+        // No pipeline yet (idle or pre-Start). Native video.volume
+        // applies — descriptor isn't installed in this state.
         video.volume = originalVolume;
         video.muted = originalVolume === 0;
       }
@@ -2495,24 +2587,12 @@
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // Bidirectional volume sync: when the user adjusts the page video's
-  // own volume control (YouTube/Bilibili native slider), reflect it
-  // in our "Original video volume" slider so they stay in sync. Our
-  // slider already controls video.volume, so this closes the loop.
-  //
-  // IMPORTANT: When the Web Audio pipeline is active, video.volume is
-  // decoupled from what the user hears (the pipeline's gain node is the
-  // real volume control). In that mode, ANY external change to
-  // video.volume — YouTube's player chrome auto-restoring its remembered
-  // setting, ad transitions, our own resets — would otherwise be
-  // mistaken for "user moved their slider" and overwrite the user's
-  // preferred originalVolume value. That caused a slow drift: original
-  // playback gradually got louder while the translation voice (which
-  // never changed) felt quieter by comparison. Fix: while the pipeline
-  // is active, ignore all video.volume changes for sync purposes; just
-  // snap video.volume back to 1.0 so the pipeline keeps getting
-  // full-strength input. Our slider is the only legitimate way to
-  // change originalVolume during a session.
+  // Bidirectional volume sync (idle state only). When the pipeline is
+  // active, video.volume's setter is hijacked (see lockVideoNativeAudio)
+  // so YouTube's native slider has no effect — by design — and the
+  // user is nudged with a status message to use SaySame's slider
+  // instead. This function only matters BEFORE Start, when the user
+  // wants their YouTube-slider position to seed our originalVolume.
   let lastObservedVideo = null;
   function attachVolumeSyncListener() {
     const v = document.querySelector("video");
@@ -2520,20 +2600,10 @@
     lastObservedVideo = v;
     v.addEventListener("volumechange", () => {
       if (!root || !elements?.originalVolumeSlider) return;
+      // Pipeline active → setter is hijacked; this event won't fire
+      // for external changes anyway. Belt and suspenders: ignore.
+      if (audioPipeline) return;
       const observed = Math.round((v.muted ? 0 : v.volume) * 100);
-      // Pipeline active → user controls volume only via our slider.
-      // Snap video.volume back to 1.0 so captureGain (unity) keeps
-      // sending full-strength audio to OpenAI, and ignore the event
-      // (no state mutation, no slider sync, no storage write).
-      if (audioPipeline) {
-        if (observed !== 100 || v.muted) {
-          v.volume = 1.0;
-          if (v.muted) v.muted = false;
-        }
-        return;
-      }
-      // Pipeline NOT active (idle / pre-Start) — keep the bidirectional
-      // sync so dragging YouTube's native slider updates our slider too.
       const known = Number(currentState.originalVolume ?? 18);
       if (Math.abs(observed - known) < 1) return;
       currentState = { ...currentState, originalVolume: observed };
