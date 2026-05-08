@@ -174,8 +174,9 @@
   .lt-mode-segment { padding: 0 8px; }
 }
 
-/* Stop button: show label by default, hide icon. Container queries
-   above flip this at narrow widths. */
+/* Stop button: show label by default, hide icon. At <520 the label
+   container query above hides the label — at the SAME breakpoint
+   the icon must appear, otherwise the button is empty. */
 .lt-btn-stop-icon {
   display: none;
   width: 14px;
@@ -183,9 +184,9 @@
   align-items: center;
   justify-content: center;
 }
-@container ltbar (max-width: 380px) {
+.lt-btn-stop-icon svg { width: 14px; height: 14px; }
+@container ltbar (max-width: 520px) {
   .lt-btn-stop-icon { display: inline-flex; }
-  .lt-btn-stop-icon svg { width: 14px; height: 14px; }
 }
 
 .lt-strip:active {
