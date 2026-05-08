@@ -2,9 +2,11 @@
 
 **Live-translate any video, in any language, in your browser.**
 
-A Chrome extension that captures audio from a video on the page, sends it to OpenAI in real time, and overlays translated voice + captions.
+![SaySame — translating a YouTube video in real time](docs/hero.png)
 
-![SaySame bar over a video](extension/assets/icons/saysame-yellow-on-black.png)
+**SaySame is a Chrome extension that translates the audio of any video in REAL TIME — YouTube, Bilibili, Xiaohongshu, Douyin, anywhere — using OpenAI's Realtime API.** You watch, it listens, you understand. No subtitles required, no waiting for human captioners, no separate apps.
+
+Built for people who watch videos in languages they don't speak: language learners, researchers tracking foreign news, developers reading Chinese tech tutorials, or anyone curious about content the rest of the internet can't access.
 
 ## What it does
 
