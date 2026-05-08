@@ -2101,6 +2101,17 @@
     elements.captionCurrent.dir = textDirection(langCode);
     elements.captionPrev.lang = langCode || "";
     elements.captionPrev.dir = textDirection(langCode);
+
+    // Auto-scroll to the latest line so the user always sees what's
+    // currently being transcribed, even if they shrink the captions
+    // box. Defer to next frame so layout has settled.
+    if (elements.captions) {
+      requestAnimationFrame(() => {
+        if (elements.captions) {
+          elements.captions.scrollTop = elements.captions.scrollHeight;
+        }
+      });
+    }
   }
 
   // ===========================================================

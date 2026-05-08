@@ -85,6 +85,11 @@
 .lt-panel {
   position: relative;
   border-radius: 14px;
+  /* Establish a containment context so child styles can react to
+     the BAR's width (not the viewport's) — needed because the user
+     can shrink the bar to a square within a wide viewport. */
+  container-type: inline-size;
+  container-name: ltbar;
   /* Background + shadow opacity are both driven by --lt-bar-opacity (0..1).
      At 1 = solid bar bg. At 0 = fully transparent (shadow also fades). */
   background-color: rgba(11, 12, 10, var(--lt-bar-opacity, 1));
@@ -126,19 +131,38 @@
   height: 56px;
   padding: 0 var(--sp-xl);
   cursor: grab;
-  /* When the viewport is narrow, allow horizontal scroll so the
-     gear/Stop/etc never get pushed off-screen. Hide the scrollbar
-     because vertical scrolling on the page would interfere. */
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.lt-strip::-webkit-scrollbar { display: none; }
 
-/* On narrow viewports, give the language/voice dropdowns a sensible
-   flex-shrink so they collapse before the action buttons do. */
+/* Selects shrink first; brand/buttons stay fixed. */
 .lt-select { flex-shrink: 1; min-width: 80px; }
 .lt-brand { flex-shrink: 0; }
 .lt-btn { flex-shrink: 0; }
+
+/* When the BAR (not the viewport) gets narrow, compact everything so
+   all controls remain visible without scrolling. */
+@container ltbar (max-width: 640px) {
+  .lt-strip { padding: 0 8px; gap: 6px; }
+  .lt-mode-segment span:not([aria-hidden="true"]) { display: none; }
+  .lt-ticker .lt-ticker-time,
+  .lt-ticker .lt-ticker-sep { display: none; }
+  .lt-wordmark { display: none; }
+  .lt-live span:not(.lt-live-dot) { display: none; }
+  .lt-select { min-width: 60px; max-width: 110px; }
+  .lt-btn { padding: 0 8px; }
+}
+
+@container ltbar (max-width: 480px) {
+  .lt-strip { padding: 0 6px; gap: 4px; }
+  .lt-select { max-width: 80px; }
+  .lt-mode { padding: 1px; }
+  .lt-mode-segment { padding: 0 8px; }
+  .lt-btn-stop { padding: 0 10px; font-size: 12px; }
+}
+
+@container ltbar (max-width: 380px) {
+  .lt-ticker { display: none; }
+  .lt-transparency-wrap { display: none; }
+}
 
 .lt-strip:active {
   cursor: grabbing;
