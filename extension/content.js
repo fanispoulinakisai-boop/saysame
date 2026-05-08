@@ -1067,6 +1067,10 @@
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
   }
 
+  function stopSvg() {
+    return `<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>`;
+  }
+
   function playSvg() {
     return `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 4l14 8-14 8z"></path></svg>`;
   }
@@ -1286,7 +1290,7 @@
 
           <button class="lt-btn lt-btn-icon lt-active-only lt-no-drag" type="button" data-lt-hide aria-label="Hide bar">${hideSvg()}</button>
 
-          <button class="lt-btn lt-btn-stop lt-active-only lt-no-drag" type="button" data-lt-stop>Stop</button>
+          <button class="lt-btn lt-btn-stop lt-active-only lt-no-drag" type="button" data-lt-stop aria-label="Stop"><span class="lt-btn-stop-icon" aria-hidden="true">${stopSvg()}</span><span class="lt-btn-stop-label">Stop</span></button>
 
           <button class="lt-btn lt-btn-icon lt-idle-only lt-no-drag" type="button" data-lt-close aria-label="Close">${closeSvg()}</button>
         </div>
@@ -2377,6 +2381,32 @@
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
   }
+
+  // Bidirectional volume sync: when the user adjusts the page video's
+  // own volume control (YouTube/Bilibili native slider), reflect it
+  // in our "Original video volume" slider so they stay in sync. Our
+  // slider already controls video.volume, so this closes the loop.
+  let lastObservedVideo = null;
+  function attachVolumeSyncListener() {
+    const v = document.querySelector("video");
+    if (!v || v === lastObservedVideo) return;
+    lastObservedVideo = v;
+    v.addEventListener("volumechange", () => {
+      if (!root || !elements?.originalVolumeSlider) return;
+      // Skip if we're the source of the change (currentState already
+      // reflects the new value). Tiny tolerance for float compare.
+      const observed = Math.round((v.muted ? 0 : v.volume) * 100);
+      const known = Number(currentState.originalVolume ?? 18);
+      if (Math.abs(observed - known) < 1) return;
+      currentState = { ...currentState, originalVolume: observed };
+      elements.originalVolumeSlider.value = String(observed);
+      elements.originalVolumeValueLabel.textContent = String(observed);
+      try { void chrome.storage.local.set({ originalVolume: observed }); } catch {}
+    });
+  }
+  // Re-check periodically because the <video> element can be created
+  // late (YouTube SPA nav) or replaced.
+  setInterval(attachVolumeSyncListener, 1500);
 
   // Boot
   (async () => {

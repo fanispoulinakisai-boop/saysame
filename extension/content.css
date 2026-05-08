@@ -162,6 +162,23 @@
 @container ltbar (max-width: 380px) {
   .lt-ticker { display: none; }
   .lt-transparency-wrap { display: none; }
+  /* Stop becomes icon-only at very narrow widths */
+  .lt-btn-stop-label { display: none; }
+  .lt-btn-stop { padding: 0 8px; }
+}
+
+/* Stop button: show label by default, hide icon. Container queries
+   above flip this at narrow widths. */
+.lt-btn-stop-icon {
+  display: none;
+  width: 14px;
+  height: 14px;
+  align-items: center;
+  justify-content: center;
+}
+@container ltbar (max-width: 380px) {
+  .lt-btn-stop-icon { display: inline-flex; }
+  .lt-btn-stop-icon svg { width: 14px; height: 14px; }
 }
 
 .lt-strip:active {
