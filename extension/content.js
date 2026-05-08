@@ -926,7 +926,12 @@
       activeTranslationVoice = sessionSettings.translationVoice;
       activeTranslationMode = sessionSettings.translationMode;
       syncRequestedControlsFromState(sessionSettings);
-      sessionStartedAt = Date.now();
+      // On a language/voice handover, keep the cumulative session
+      // timer + cost so the user sees the TRUE total spend — not
+      // a misleading $0.00 reset every time they switch languages.
+      if (!isHandover || !sessionStartedAt) {
+        sessionStartedAt = Date.now();
+      }
       startTickerTimer();
       trace("sdp.remote_set", {
         token,
