@@ -151,20 +151,27 @@
   .lt-btn { padding: 0 8px; }
 }
 
-@container ltbar (max-width: 480px) {
-  .lt-strip { padding: 0 6px; gap: 4px; }
-  .lt-select { max-width: 80px; }
-  .lt-mode { padding: 1px; }
-  .lt-mode-segment { padding: 0 8px; }
-  .lt-btn-stop { padding: 0 10px; font-size: 12px; }
-}
-
-@container ltbar (max-width: 380px) {
-  .lt-ticker { display: none; }
+@container ltbar (max-width: 520px) {
+  .lt-strip { padding: 0 6px; gap: 5px; }
+  .lt-live { display: none; }   /* drop LIVE pulse — bar visibility = active */
   .lt-transparency-wrap { display: none; }
-  /* Stop becomes icon-only at very narrow widths */
+  .lt-select { max-width: 90px; }
+  .lt-btn { padding: 0 6px; }
+  /* Stop becomes icon-only well before it would overflow */
   .lt-btn-stop-label { display: none; }
   .lt-btn-stop { padding: 0 8px; }
+}
+
+@container ltbar (max-width: 440px) {
+  .lt-strip { gap: 4px; }
+  .lt-ticker { display: none; }   /* drop cost ticker too */
+  [data-lt-cc] { display: none; } /* CC also in settings + voice-only anyway */
+  .lt-select { max-width: 70px; }
+}
+
+@container ltbar (max-width: 360px) {
+  .lt-mode { padding: 1px; }
+  .lt-mode-segment { padding: 0 8px; }
 }
 
 /* Stop button: show label by default, hide icon. Container queries
