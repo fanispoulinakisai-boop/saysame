@@ -177,11 +177,12 @@
       const channel = pc.createDataChannel("oai-events");
       session.dataChannel = channel;
 
-      // We never play any audio in text mode, but we still need a
-      // recvonly transceiver so the SDP offer is valid for the
-      // realtime endpoint.
-      pc.addTransceiver("audio", { direction: "sendonly" });
-
+      // Mirror voice mode exactly: just addTrack, let WebRTC create
+      // the transceiver implicitly. Adding an explicit addTransceiver
+      // before addTrack creates a SECOND empty transceiver that the
+      // realtime endpoint then picks, resulting in 0ms of audio
+      // reaching the server (confirmed by error
+      // "input_audio_buffer_commit_empty: buffer only has 0.00ms").
       stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
 
       channel.addEventListener("open", () => {
