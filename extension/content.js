@@ -406,25 +406,91 @@
     await Promise.race([playPromise.catch(() => {}), delay(250)]);
   }
 
-  function captureVideoStreamOnce(video) {
-    const capture = video.captureStream || video.mozCaptureStream;
-    if (!capture) {
-      throw new Error("This Chrome build cannot capture the page's video element.");
+  // Web Audio pipeline: decouples PLAYBACK volume (what user hears)
+  // from CAPTURE volume (what OpenAI receives). With the old approach
+  // (video.captureStream), lowering video.volume also lowered the
+  // captured audio → OpenAI got quiet input → translation degraded.
+  // Now: capture path is fixed at unity gain; only the playback gain
+  // node responds to the user's "Original video volume" slider.
+  let audioPipeline = null;
+
+  function setupAudioPipeline(video) {
+    if (audioPipeline?.video === video) return audioPipeline;
+    if (audioPipeline) tearDownAudioPipeline();
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    let source;
+    try {
+      source = ctx.createMediaElementSource(video);
+    } catch (e) {
+      // The video may already be wired to another AudioContext (rare;
+      // happens if another extension or the page itself grabbed it).
+      // Fall back to plain captureStream so we still get SOMETHING.
+      try { ctx.close(); } catch {}
+      throw new Error("Cannot tap video audio (already in use by another tool).");
     }
-    return capture.call(video);
+
+    const playbackGain = ctx.createGain();
+    playbackGain.gain.value = 1.0;
+    source.connect(playbackGain);
+    playbackGain.connect(ctx.destination);
+
+    const captureGain = ctx.createGain();
+    captureGain.gain.value = 1.0; // Always full-volume to OpenAI.
+    source.connect(captureGain);
+    const dest = ctx.createMediaStreamDestination();
+    captureGain.connect(dest);
+
+    audioPipeline = {
+      video,
+      ctx,
+      source,
+      playbackGain,
+      captureGain,
+      dest,
+      capturedStream: dest.stream
+    };
+    return audioPipeline;
+  }
+
+  function tearDownAudioPipeline() {
+    if (!audioPipeline) return;
+    try { audioPipeline.source.disconnect(); } catch {}
+    try { audioPipeline.playbackGain.disconnect(); } catch {}
+    try { audioPipeline.captureGain.disconnect(); } catch {}
+    try { audioPipeline.dest.disconnect(); } catch {}
+    try { audioPipeline.ctx.close(); } catch {}
+    audioPipeline = null;
+  }
+
+  function setPipelinePlaybackGain(value0to1) {
+    if (!audioPipeline) return;
+    const clamped = Math.max(0, Math.min(1, value0to1));
+    audioPipeline.playbackGain.gain.value = clamped;
   }
 
   async function capturedVideoStream(video, timeoutMs = 9000) {
+    // Make sure the video is actually playing — Web Audio source
+    // needs the element to have started.
     const start = Date.now();
-    let lastStream;
     while (Date.now() - start < timeoutMs) {
       if (video.paused) await nudgePlayback(video);
-      lastStream = captureVideoStreamOnce(video);
-      if (lastStream.getAudioTracks().length) return lastStream;
-      lastStream.getTracks().forEach((track) => track.stop());
+      if (!video.paused && video.readyState >= 2) break;
       await delay(300);
     }
-    throw new Error("Video audio is not ready yet. Press play, then start SaySame again.");
+    if (video.paused) {
+      throw new Error("Video audio is not ready yet. Press play, then start SaySame again.");
+    }
+    const pipeline = setupAudioPipeline(video);
+    if (!pipeline?.capturedStream?.getAudioTracks?.().length) {
+      throw new Error("This browser cannot tap the page's video audio.");
+    }
+    // Resume context if it's suspended (autoplay policy). The user
+    // already clicked Start so a gesture is active.
+    if (pipeline.ctx.state === "suspended") {
+      try { await pipeline.ctx.resume(); } catch {}
+    }
+    return pipeline.capturedStream;
   }
 
   function closeSession(session, { stopStream = true } = {}) {
@@ -446,8 +512,20 @@
     const translationVolume = translationVolumeValue(settings.translationVolume);
 
     if (video) {
-      video.volume = originalVolume;
-      video.muted = originalVolume === 0;
+      if (audioPipeline) {
+        // Pipeline is active — control PLAYBACK volume only. Capture
+        // path stays at unity gain so OpenAI always gets clean audio.
+        // Force video.volume = 1.0 + muted=false so the WebAudio
+        // source has full-strength audio to work with.
+        video.volume = 1.0;
+        video.muted = false;
+        setPipelinePlaybackGain(originalVolume);
+      } else {
+        // No pipeline yet (idle or text-mode-only state). Fall back
+        // to native video.volume so user's slider isn't silently dead.
+        video.volume = originalVolume;
+        video.muted = originalVolume === 0;
+      }
     }
 
     if (remote && pageSession?.remoteAudio) {
@@ -2393,14 +2471,23 @@
     lastObservedVideo = v;
     v.addEventListener("volumechange", () => {
       if (!root || !elements?.originalVolumeSlider) return;
-      // Skip if we're the source of the change (currentState already
-      // reflects the new value). Tiny tolerance for float compare.
       const observed = Math.round((v.muted ? 0 : v.volume) * 100);
       const known = Number(currentState.originalVolume ?? 18);
+      // While Web Audio pipeline is active, applyAudioMix resets
+      // video.volume to 1.0. Ignore those self-triggered events.
+      if (audioPipeline && observed === 100) return;
       if (Math.abs(observed - known) < 1) return;
       currentState = { ...currentState, originalVolume: observed };
       elements.originalVolumeSlider.value = String(observed);
       elements.originalVolumeValueLabel.textContent = String(observed);
+      // When pipeline is active the user's intent (lower playback)
+      // must go through the Web Audio gain node, not video.volume.
+      if (audioPipeline) {
+        setPipelinePlaybackGain(observed / 100);
+        // Restore video.volume to 1.0 so capture stays unaffected
+        // (and the pipeline source keeps receiving full-strength audio).
+        v.volume = 1.0;
+      }
       try { void chrome.storage.local.set({ originalVolume: observed }); } catch {}
     });
   }
