@@ -143,6 +143,15 @@
 @container ltbar (max-width: 640px) {
   .lt-strip { padding: 0 8px; gap: 6px; }
   .lt-mode-segment span:not([aria-hidden="true"]) { display: none; }
+  /* When text labels hide, mode segments stop fighting for space —
+     become tight icon buttons matching the voice/lang icons. */
+  .lt-mode-segment {
+    flex: 0 0 auto;
+    padding: 0;
+    width: 32px;
+    height: 28px;
+    gap: 0;
+  }
   .lt-ticker .lt-ticker-time,
   .lt-ticker .lt-ticker-sep { display: none; }
   .lt-wordmark { display: none; }
@@ -193,6 +202,10 @@
   }
   [data-lt-voice-wrap]::before { content: "🎙"; }
   [data-lt-language-wrap]::before { content: attr(data-flag); }
+
+  /* Tiny extra breathing room when both icons are adjacent so they
+     don't look glued together. */
+  [data-lt-voice-wrap] + [data-lt-language-wrap] { margin-left: 4px; }
 }
 
 @container ltbar (max-width: 440px) {
