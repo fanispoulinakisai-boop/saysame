@@ -7,6 +7,19 @@
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
   // ===========================================================
+  const LANGUAGE_FLAGS = {
+    en: "🇺🇸", el: "🇬🇷", es: "🇪🇸", fr: "🇫🇷", de: "🇩🇪", it: "🇮🇹",
+    ja: "🇯🇵", ru: "🇷🇺", zh: "🇨🇳", pt: "🇵🇹", ko: "🇰🇷", ar: "🇸🇦",
+    af: "🇿🇦", az: "🇦🇿", be: "🇧🇾", bg: "🇧🇬", bs: "🇧🇦", ca: "🇪🇸",
+    cs: "🇨🇿", cy: "🏴󠁧󠁢󠁷󠁬󠁳󠁿", da: "🇩🇰", et: "🇪🇪", fa: "🇮🇷", fi: "🇫🇮",
+    gl: "🇪🇸", he: "🇮🇱", hi: "🇮🇳", hr: "🇭🇷", hu: "🇭🇺", hy: "🇦🇲",
+    id: "🇮🇩", is: "🇮🇸", kk: "🇰🇿", kn: "🇮🇳", lt: "🇱🇹", lv: "🇱🇻",
+    mi: "🇳🇿", mk: "🇲🇰", mr: "🇮🇳", ms: "🇲🇾", ne: "🇳🇵", nl: "🇳🇱",
+    no: "🇳🇴", pl: "🇵🇱", ro: "🇷🇴", sk: "🇸🇰", sl: "🇸🇮", sr: "🇷🇸",
+    sv: "🇸🇪", sw: "🇰🇪", ta: "🇮🇳", th: "🇹🇭", tl: "🇵🇭", tr: "🇹🇷",
+    uk: "🇺🇦", ur: "🇵🇰", vi: "🇻🇳"
+  };
+
   const LANGUAGE_OPTIONS = [
     { code: "en", name: "English", common: true },
     { code: "el", name: "Greek", common: true },
@@ -163,6 +176,16 @@
 
   function languageName(code) {
     return LANGUAGE_NAMES[code] || code || "Translation";
+  }
+
+  function languageFlag(code) {
+    return LANGUAGE_FLAGS[code] || "🏳";
+  }
+
+  function updateLanguageFlagAttr() {
+    if (!elements?.languageWrap || !elements?.languageSelect) return;
+    const code = elements.languageSelect.value || requestedTargetLanguage || "en";
+    elements.languageWrap.dataset.flag = languageFlag(code);
   }
 
   function textDirection(code) {
@@ -1680,6 +1703,7 @@
     elements.languageSelect.addEventListener("change", async () => {
       const targetLanguage = elements.languageSelect.value;
       requestedTargetLanguage = targetLanguage;
+      updateLanguageFlagAttr();
       warmTranslationLanguages("language_change", targetLanguage);
       if (pageSession) {
         render(liveSnapshot("Switching language", {
@@ -1809,6 +1833,7 @@
     elements.defaultLanguage.addEventListener("change", () => {
       elements.languageSelect.value = elements.defaultLanguage.value;
       requestedTargetLanguage = elements.defaultLanguage.value;
+      updateLanguageFlagAttr();
       void pushSettingsToBackground();
     });
 
@@ -2233,6 +2258,7 @@
     elements.defaultMode.value = mode;
     elements.defaultVoice.value = currentState.translationVoice || "marin";
     elements.defaultLanguage.value = currentState.targetLanguage || "de";
+    updateLanguageFlagAttr();
     elements.opacitySlider.value = String(barOpacity);
     elements.opacityValue.textContent = String(barOpacity);
     const ov = Number(currentState.originalVolume ?? 18);

@@ -155,24 +155,50 @@
   .lt-strip { padding: 0 6px; gap: 5px; }
   .lt-live { display: none; }                 /* drop LIVE pulse */
   .lt-transparency-wrap { display: none; }
-  /* Idle: hide voice picker — voice is also settable in Settings. */
-  .lt-root.is-idle [data-lt-voice-wrap] { display: none; }
-  .lt-select { max-width: 90px; }
   .lt-btn { padding: 0 6px; }
   /* Stop becomes icon-only well before it would overflow */
   .lt-btn-stop-label { display: none; }
   .lt-btn-stop { padding: 0 8px; }
   .lt-btn-primary { padding: 0 12px; }        /* tighter Start button */
+
+  /* Voice + language pickers collapse to icon buttons. The native
+     <select> still opens its dropdown on click; we just hide the
+     visible text and overlay an icon. Saves ~140px combined. */
+  [data-lt-voice-wrap],
+  [data-lt-language-wrap] {
+    width: 36px;
+    min-width: 36px;
+    max-width: 36px;
+    overflow: visible;
+  }
+  [data-lt-voice-wrap] select,
+  [data-lt-language-wrap] select {
+    color: transparent;
+    padding: 0;
+    text-indent: -9999px;       /* hide text in the closed select */
+    width: 100%;
+  }
+  [data-lt-voice-wrap]::after,
+  [data-lt-language-wrap]::after { display: none; }   /* hide chevron */
+  [data-lt-voice-wrap]::before,
+  [data-lt-language-wrap]::before {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+    pointer-events: none;
+  }
+  [data-lt-voice-wrap]::before { content: "🎙"; }
+  [data-lt-language-wrap]::before { content: attr(data-flag); }
 }
 
 @container ltbar (max-width: 440px) {
   .lt-strip { gap: 4px; padding: 0 4px; }
   .lt-ticker { display: none; }
   [data-lt-cc] { display: none; }
-  .lt-select { max-width: 70px; }
-  /* Idle: hide language picker too at this size; user can flip in
-     settings, and the dropdown chevron alone takes a lot of space. */
-  .lt-root.is-idle [data-lt-language-wrap] { display: none; }
 }
 
 @container ltbar (max-width: 360px) {
