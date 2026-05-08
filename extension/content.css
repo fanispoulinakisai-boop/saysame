@@ -446,6 +446,28 @@
   pointer-events: none;
 }
 
+/* `is-locked` is the same idea as `is-disabled` but keeps pointer
+   events live on the wrapper so the title-attribute tooltip still
+   appears on hover. The inner <select> is HTML-disabled, so the
+   user can't actually open the dropdown — they just see why. Used
+   for the voice picker, which is greyed out because OpenAI's
+   `gpt-realtime-translate` doesn't currently support voice
+   selection (model uses dynamic source-speaker matching). When/if
+   that changes upstream we just remove `disabled` + `is-locked`
+   and the picker comes back to life with no other code changes. */
+.lt-select.is-locked {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.lt-select.is-locked select {
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.lt-input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* Buttons */
 .lt-btn {
   display: inline-flex;

@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.3.3"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.3.4"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -1477,9 +1477,9 @@
                 <option value="text">Text (captions only · ~$0.02/min)</option>
               </select>
             </div>
-            <div class="lt-settings-row">
+            <div class="lt-settings-row" title="Voice selection isn't supported by the current OpenAI translation model. Translated speech automatically follows the source speaker's tone.">
               <span class="lt-settings-label">Default voice</span>
-              <select class="lt-input" data-lt-default-voice></select>
+              <select class="lt-input" data-lt-default-voice disabled title="Voice selection isn't supported by the current OpenAI translation model. Translated speech automatically follows the source speaker's tone."></select>
             </div>
             <div class="lt-settings-row">
               <span class="lt-settings-label">Default language</span>
@@ -1561,8 +1561,8 @@
             </button>
           </div>
 
-          <div class="lt-select lt-idle-only lt-no-drag" data-lt-voice-wrap>
-            <select aria-label="Translation voice" data-lt-voice></select>
+          <div class="lt-select lt-idle-only lt-no-drag is-locked" data-lt-voice-wrap title="Voice selection isn't supported by the current OpenAI translation model. Translated speech automatically follows the source speaker's tone.">
+            <select aria-label="Translation voice" data-lt-voice disabled title="Voice selection isn't supported by the current OpenAI translation model. Translated speech automatically follows the source speaker's tone."></select>
           </div>
 
           <div class="lt-select lt-no-drag" data-lt-language-wrap>
