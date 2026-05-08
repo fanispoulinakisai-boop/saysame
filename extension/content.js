@@ -1893,6 +1893,37 @@
       handle.addEventListener("pointerup", endResize);
       handle.addEventListener("pointercancel", endResize);
     });
+
+    // Window resize: re-clamp bar position + width so we never end
+    // up with controls pushed off-screen when the user shrinks the
+    // window. Throttle via rAF.
+    let resizeRaf = 0;
+    window.addEventListener("resize", () => {
+      if (resizeRaf) return;
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = 0;
+        if (!root) return;
+        // Clamp width to fit current viewport.
+        const widthVar = parseFloat(root.style.getPropertyValue("--lt-bar-width")) || 880;
+        const maxWidth = window.innerWidth - 16;
+        if (widthVar > maxWidth) {
+          root.style.setProperty("--lt-bar-width", `${Math.max(320, maxWidth)}px`);
+        }
+        // Clamp position if user had previously dragged it.
+        const rect = root.getBoundingClientRect();
+        if (rect.width === 0) return;
+        let left = rect.left;
+        let top = rect.top;
+        const margin = 8;
+        const usingExplicitPos = root.style.left && root.style.left !== "50%";
+        if (usingExplicitPos) {
+          left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, left));
+          top = Math.max(margin, Math.min(window.innerHeight - rect.height - margin, top));
+          root.style.left = `${left}px`;
+          root.style.top = `${top}px`;
+        }
+      });
+    });
   }
 
   function toggleSettings() {
@@ -2280,6 +2311,47 @@
     return false;
   });
 
+  // Inject a small SaySame button into YouTube's player chrome
+  // (next to the closed-caption button). Mirrors the convenience of
+  // toolbar-icon click, but right where users are looking.
+  function injectYouTubePlayerButton() {
+    if (!/^https?:\/\/([^/]+\.)?youtube\.com\//i.test(window.location.href)) return;
+    if (document.getElementById("__saysame-yt-btn")) return;
+    const rightControls = document.querySelector(".ytp-right-controls");
+    if (!rightControls) return;
+    const btn = document.createElement("button");
+    btn.id = "__saysame-yt-btn";
+    btn.className = "ytp-button";
+    btn.title = "Toggle SaySame translator";
+    btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;width:48px;height:100%;padding:0;background:transparent;border:0;cursor:pointer;vertical-align:top;";
+    btn.innerHTML = `
+      <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;background:#D6FF3D;">
+        <span style="font:700 14px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#0B0C0A;letter-spacing:-0.02em;">S</span>
+      </span>
+    `;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!root) createOverlay();
+      if (root.hasAttribute("hidden")) showOverlay();
+      else hideOverlay();
+    });
+    // Insert before the settings (gear) button if found, else at the start
+    const settings = rightControls.querySelector(".ytp-settings-button");
+    if (settings) rightControls.insertBefore(btn, settings);
+    else rightControls.prepend(btn);
+  }
+
+  // YouTube swaps its DOM frequently (SPA navigation, autoplay
+  // transitions). Watch and re-inject if our button gets removed.
+  function watchYouTubeForButton() {
+    if (!/^https?:\/\/([^/]+\.)?youtube\.com\//i.test(window.location.href)) return;
+    injectYouTubePlayerButton();
+    const observer = new MutationObserver(() => {
+      injectYouTubePlayerButton();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+  }
+
   // Boot
   (async () => {
     await syncInitialState();
@@ -2288,5 +2360,7 @@
     applyStoredSettingsToControls();
     // Stay hidden until user clicks the toolbar icon.
     hideOverlay();
+    // Add the YouTube player-chrome button (no-op on other sites).
+    watchYouTubeForButton();
   })();
 })();

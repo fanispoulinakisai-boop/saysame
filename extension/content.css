@@ -126,7 +126,19 @@
   height: 56px;
   padding: 0 var(--sp-xl);
   cursor: grab;
+  /* When the viewport is narrow, allow horizontal scroll so the
+     gear/Stop/etc never get pushed off-screen. Hide the scrollbar
+     because vertical scrolling on the page would interfere. */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.lt-strip::-webkit-scrollbar { display: none; }
+
+/* On narrow viewports, give the language/voice dropdowns a sensible
+   flex-shrink so they collapse before the action buttons do. */
+.lt-select { flex-shrink: 1; min-width: 80px; }
+.lt-brand { flex-shrink: 0; }
+.lt-btn { flex-shrink: 0; }
 
 .lt-strip:active {
   cursor: grabbing;
