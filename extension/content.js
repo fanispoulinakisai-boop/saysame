@@ -3,6 +3,10 @@
   if (window.__liveTranslateOverlayVersion === OVERLAY_VERSION) return;
   window.__liveTranslateOverlayVersion = OVERLAY_VERSION;
   document.querySelectorAll(".lt-root, .lt-pill").forEach((element) => element.remove());
+  // Page-world-visible build stamp so we can verify which content
+  // script version is actually loaded on a tab. Read with:
+  //   document.documentElement.dataset.saysameBuild
+  try { document.documentElement.dataset.saysameBuild = "0.3.0"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
