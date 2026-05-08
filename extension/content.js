@@ -2315,30 +2315,37 @@
   // (next to the closed-caption button). Mirrors the convenience of
   // toolbar-icon click, but right where users are looking.
   function injectYouTubePlayerButton() {
-    if (!/^https?:\/\/([^/]+\.)?youtube\.com\//i.test(window.location.href)) return;
-    if (document.getElementById("__saysame-yt-btn")) return;
-    const rightControls = document.querySelector(".ytp-right-controls");
-    if (!rightControls) return;
-    const btn = document.createElement("button");
-    btn.id = "__saysame-yt-btn";
-    btn.className = "ytp-button";
-    btn.title = "Toggle SaySame translator";
-    btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;width:48px;height:100%;padding:0;background:transparent;border:0;cursor:pointer;vertical-align:top;";
-    btn.innerHTML = `
-      <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;background:#D6FF3D;">
-        <span style="font:700 14px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#0B0C0A;letter-spacing:-0.02em;">S</span>
-      </span>
-    `;
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (!root) createOverlay();
-      if (root.hasAttribute("hidden")) showOverlay();
-      else hideOverlay();
-    });
-    // Insert before the settings (gear) button if found, else at the start
-    const settings = rightControls.querySelector(".ytp-settings-button");
-    if (settings) rightControls.insertBefore(btn, settings);
-    else rightControls.prepend(btn);
+    try {
+      if (!/^https?:\/\/([^/]+\.)?youtube\.com\//i.test(window.location.href)) return;
+      if (document.getElementById("__saysame-yt-btn")) return;
+      // YouTube's right-controls contains subcontainers
+      // (.ytp-right-controls-left and .ytp-right-controls-right) and
+      // the settings gear lives inside one of them. Insert next to the
+      // gear by using ITS parent, not the outer rightControls.
+      const settings = document.querySelector(".ytp-settings-button");
+      if (!settings || !settings.parentElement) return;
+      const parent = settings.parentElement;
+      const btn = document.createElement("button");
+      btn.id = "__saysame-yt-btn";
+      btn.className = "ytp-button";
+      btn.title = "Toggle SaySame translator";
+      btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;width:48px;height:100%;padding:0;background:transparent;border:0;cursor:pointer;vertical-align:top;";
+      btn.innerHTML = `
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;background:#D6FF3D;">
+          <span style="font:700 14px/1 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#0B0C0A;letter-spacing:-0.02em;">S</span>
+        </span>
+      `;
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!root) createOverlay();
+        if (root.hasAttribute("hidden")) showOverlay();
+        else hideOverlay();
+      });
+      parent.insertBefore(btn, settings);
+    } catch {
+      // Defensive — if YouTube's DOM shape changes again, don't break
+      // the rest of the content script.
+    }
   }
 
   // YouTube swaps its DOM frequently (SPA navigation, autoplay
