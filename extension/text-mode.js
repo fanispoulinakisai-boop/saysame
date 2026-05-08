@@ -283,10 +283,10 @@
         }
       });
 
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: false,
-        offerToReceiveVideo: false
-      });
+      // Mirror voice mode exactly: bare createOffer(). Setting
+      // offerToReceiveAudio:false in the offer caused audio to not
+      // be properly negotiated (0.00ms reaching server).
+      const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       await waitForIceGatheringComplete(pc);
 
