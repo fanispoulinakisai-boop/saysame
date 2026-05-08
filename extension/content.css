@@ -153,25 +153,39 @@
 
 @container ltbar (max-width: 520px) {
   .lt-strip { padding: 0 6px; gap: 5px; }
-  .lt-live { display: none; }   /* drop LIVE pulse — bar visibility = active */
+  .lt-live { display: none; }                 /* drop LIVE pulse */
   .lt-transparency-wrap { display: none; }
+  /* Idle: hide voice picker — voice is also settable in Settings. */
+  .lt-root.is-idle [data-lt-voice-wrap] { display: none; }
   .lt-select { max-width: 90px; }
   .lt-btn { padding: 0 6px; }
   /* Stop becomes icon-only well before it would overflow */
   .lt-btn-stop-label { display: none; }
   .lt-btn-stop { padding: 0 8px; }
+  .lt-btn-primary { padding: 0 12px; }        /* tighter Start button */
 }
 
 @container ltbar (max-width: 440px) {
-  .lt-strip { gap: 4px; }
-  .lt-ticker { display: none; }   /* drop cost ticker too */
-  [data-lt-cc] { display: none; } /* CC also in settings + voice-only anyway */
+  .lt-strip { gap: 4px; padding: 0 4px; }
+  .lt-ticker { display: none; }
+  [data-lt-cc] { display: none; }
   .lt-select { max-width: 70px; }
+  /* Idle: hide language picker too at this size; user can flip in
+     settings, and the dropdown chevron alone takes a lot of space. */
+  .lt-root.is-idle [data-lt-language-wrap] { display: none; }
 }
 
 @container ltbar (max-width: 360px) {
   .lt-mode { padding: 1px; }
   .lt-mode-segment { padding: 0 8px; }
+  .lt-btn-primary { padding: 0 8px; font-size: 12px; }
+}
+
+/* Defensive: clip whatever still doesn't fit so buttons NEVER float
+   visibly outside the bar. Items hidden via container queries above
+   should make this rare. */
+.lt-strip {
+  overflow: hidden;
 }
 
 /* Stop button: show label by default, hide icon. At <520 the label
