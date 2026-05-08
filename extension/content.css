@@ -433,9 +433,28 @@
 
 /* Strip layout — idle vs active */
 .lt-idle-only,
-.lt-active-only {
+.lt-active-only,
+.lt-voice-only {
   display: none;
 }
+
+/* CC toggle: only meaningful in voice mode (text mode always shows
+   captions). Show it when bar is active AND voice mode. Style the
+   "off" state so the user can tell at a glance. */
+.lt-root.is-active[data-mode="voice"] .lt-voice-only {
+  display: inline-flex;
+}
+[data-lt-cc].is-off { opacity: 0.45; }
+[data-lt-cc].is-off::after {
+  content: "";
+  position: absolute;
+  inset: 50% 6px auto 6px;
+  height: 2px;
+  background: var(--text-primary);
+  transform: rotate(-20deg);
+  pointer-events: none;
+}
+[data-lt-cc] { position: relative; }
 
 .lt-root.is-idle .lt-idle-only {
   display: inline-flex;

@@ -1050,6 +1050,10 @@
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
   }
 
+  function ccSvg() {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M9 10a2 2 0 0 0-3 0v4a2 2 0 0 0 3 0"/><path d="M17 10a2 2 0 0 0-3 0v4a2 2 0 0 0 3 0"/></svg>`;
+  }
+
   function dropletSvg() {
     return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5s6 6.5 6 11a6 6 0 1 1-12 0c0-4.5 6-11 6-11z"></path></svg>`;
   }
@@ -1095,6 +1099,7 @@
 
     root = document.createElement("aside");
     root.className = "lt-root is-idle";
+    root.dataset.mode = mode || "voice";
     root.setAttribute("role", "region");
     root.setAttribute("aria-label", "SaySame live translator");
 
@@ -1267,6 +1272,8 @@
             </div>
           </div>
 
+          <button class="lt-btn lt-btn-icon lt-no-drag lt-voice-only" type="button" data-lt-cc aria-label="Toggle captions" aria-pressed="true">${ccSvg()}</button>
+
           <button class="lt-btn lt-btn-icon lt-no-drag" type="button" data-lt-gear aria-label="Settings">${gearSvg()}</button>
 
           <button class="lt-btn lt-btn-icon lt-active-only lt-no-drag" type="button" data-lt-hide aria-label="Hide bar">${hideSvg()}</button>
@@ -1311,6 +1318,7 @@
       closeBtn: root.querySelector("[data-lt-close]"),
       hideBtn: root.querySelector("[data-lt-hide]"),
       transparencyBtn: root.querySelector("[data-lt-transparency]"),
+      ccBtn: root.querySelector("[data-lt-cc]"),
 
       ticker: root.querySelector("[data-lt-ticker]"),
       tickerTime: root.querySelector("[data-lt-ticker-time]"),
@@ -1672,7 +1680,7 @@
     });
     elements.presetQuickBtns.forEach((btn) => {
       btn.addEventListener("click", () => {
-        setOpacity(Number(btn.dataset.presetQuick));
+        setOpacity(Number(btn.dataset.ltPresetQuick));
         popoverOpen = false;
         elements.popover.classList.remove("is-open");
       });
@@ -1720,17 +1728,29 @@
     });
     elements.presetBtns.forEach((btn) => {
       btn.addEventListener("click", () => {
-        setOpacity(Number(btn.dataset.preset));
+        setOpacity(Number(btn.dataset.ltPreset));
       });
     });
 
     // Settings: show-captions toggle (voice mode only — text mode
     // always shows captions because they're the whole point of it)
-    elements.showCaptionsToggle.addEventListener("change", () => {
-      const showCaptions = elements.showCaptionsToggle.checked;
+    const setShowCaptions = (showCaptions) => {
       currentState = { ...currentState, showCaptions };
+      if (elements.showCaptionsToggle) elements.showCaptionsToggle.checked = showCaptions;
+      if (elements.ccBtn) {
+        elements.ccBtn.setAttribute("aria-pressed", String(showCaptions));
+        elements.ccBtn.classList.toggle("is-off", !showCaptions);
+      }
       applyShowCaptionsClass();
       try { void chrome.storage.local.set({ showCaptions }); } catch {}
+    };
+    elements.showCaptionsToggle.addEventListener("change", () => {
+      setShowCaptions(elements.showCaptionsToggle.checked);
+    });
+    // CC button on the bar (voice mode only) — same toggle, just on
+    // the bar so users don't have to open settings to flip it.
+    elements.ccBtn.addEventListener("click", () => {
+      setShowCaptions(currentState.showCaptions === false);
     });
 
     // Settings: volume sliders (original video / translated voice)
@@ -1891,6 +1911,7 @@
   function setMode(next) {
     if (next !== "voice" && next !== "text") return;
     mode = next;
+    if (root) root.dataset.mode = mode;
     if (elements.mode) {
       elements.mode.dataset.mode = mode;
       elements.modeSegments.forEach((s) => {
