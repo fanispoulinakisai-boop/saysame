@@ -228,12 +228,12 @@
   .lt-btn-primary { padding: 0 8px; font-size: 12px; }
 }
 
-/* Defensive: clip whatever still doesn't fit so buttons NEVER float
-   visibly outside the bar. Items hidden via container queries above
-   should make this rare. */
-.lt-strip {
-  overflow: hidden;
-}
+/* NOTE: do NOT set overflow:hidden on .lt-strip — the transparency
+   popover is positioned absolutely with bottom:100% to render ABOVE
+   the strip, and overflow:hidden would clip it (the popover would
+   appear cut off at the top, or completely invisible at narrow
+   widths). The container queries above already compact every control
+   so nothing visibly bleeds outside the bar at any reachable width. */
 
 /* Stop button: show label by default, hide icon. At <520 the label
    container query above hides the label — at the SAME breakpoint

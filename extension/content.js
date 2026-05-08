@@ -679,7 +679,14 @@
     sessionStartedAt = 0;
     stopTickerTimer();
     stopSourceCaptionPolling();
-    closeSession(session);
+    // IMPORTANT: do NOT stop the session.stream tracks — that stream is
+    // the Web Audio pipeline's MediaStreamDestination output, and once
+    // its tracks are stopped the pipeline is permanently dead. Reusing
+    // the pipeline on the next Start would hand WebRTC a silent stream
+    // and the user gets stuck on "Listening..." forever. The pipeline
+    // (and its stream) live across Stop/Start until the page video
+    // element changes or we navigate away.
+    closeSession(session, { stopStream: false });
     isStreaming = false;
     previousFinalizedTarget = "";
     currentTargetText = "";
@@ -730,9 +737,11 @@
         errorMessage: error?.message || null
       });
     }
-    if (session?.stream) {
-      session.stream.getTracks().forEach((track) => track.stop());
-    }
+    // Do NOT stop session.stream tracks — same reason as stopPageTranslation:
+    // the stream is owned by the Web Audio pipeline and must survive
+    // Stop so that a subsequent Start can reuse it. Stopping the tracks
+    // permanently dead-ends the pipeline (createMediaElementSource
+    // cannot be called twice on the same <video> element).
 
     if (shouldRender) {
       render({
@@ -2490,6 +2499,20 @@
   // own volume control (YouTube/Bilibili native slider), reflect it
   // in our "Original video volume" slider so they stay in sync. Our
   // slider already controls video.volume, so this closes the loop.
+  //
+  // IMPORTANT: When the Web Audio pipeline is active, video.volume is
+  // decoupled from what the user hears (the pipeline's gain node is the
+  // real volume control). In that mode, ANY external change to
+  // video.volume — YouTube's player chrome auto-restoring its remembered
+  // setting, ad transitions, our own resets — would otherwise be
+  // mistaken for "user moved their slider" and overwrite the user's
+  // preferred originalVolume value. That caused a slow drift: original
+  // playback gradually got louder while the translation voice (which
+  // never changed) felt quieter by comparison. Fix: while the pipeline
+  // is active, ignore all video.volume changes for sync purposes; just
+  // snap video.volume back to 1.0 so the pipeline keeps getting
+  // full-strength input. Our slider is the only legitimate way to
+  // change originalVolume during a session.
   let lastObservedVideo = null;
   function attachVolumeSyncListener() {
     const v = document.querySelector("video");
@@ -2498,22 +2521,24 @@
     v.addEventListener("volumechange", () => {
       if (!root || !elements?.originalVolumeSlider) return;
       const observed = Math.round((v.muted ? 0 : v.volume) * 100);
+      // Pipeline active → user controls volume only via our slider.
+      // Snap video.volume back to 1.0 so captureGain (unity) keeps
+      // sending full-strength audio to OpenAI, and ignore the event
+      // (no state mutation, no slider sync, no storage write).
+      if (audioPipeline) {
+        if (observed !== 100 || v.muted) {
+          v.volume = 1.0;
+          if (v.muted) v.muted = false;
+        }
+        return;
+      }
+      // Pipeline NOT active (idle / pre-Start) — keep the bidirectional
+      // sync so dragging YouTube's native slider updates our slider too.
       const known = Number(currentState.originalVolume ?? 18);
-      // While Web Audio pipeline is active, applyAudioMix resets
-      // video.volume to 1.0. Ignore those self-triggered events.
-      if (audioPipeline && observed === 100) return;
       if (Math.abs(observed - known) < 1) return;
       currentState = { ...currentState, originalVolume: observed };
       elements.originalVolumeSlider.value = String(observed);
       elements.originalVolumeValueLabel.textContent = String(observed);
-      // When pipeline is active the user's intent (lower playback)
-      // must go through the Web Audio gain node, not video.volume.
-      if (audioPipeline) {
-        setPipelinePlaybackGain(observed / 100);
-        // Restore video.volume to 1.0 so capture stays unaffected
-        // (and the pipeline source keeps receiving full-strength audio).
-        v.volume = 1.0;
-      }
       try { void chrome.storage.local.set({ originalVolume: observed }); } catch {}
     });
   }
