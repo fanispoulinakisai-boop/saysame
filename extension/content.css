@@ -595,8 +595,10 @@
 }
 
 .lt-spacer {
-  flex: 1 1 auto;
-  min-width: 4px;
+  /* No longer grows. All controls pack together on the left, no
+     wasted gap. Keep a small fixed margin for visual breathing. */
+  flex: 0 0 8px;
+  min-width: 8px;
 }
 
 /* Transparency popover */
