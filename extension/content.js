@@ -1124,9 +1124,12 @@
           root.style.transform = "none";
         }
         const sz = stored?.barSize;
+        // Floor at 600px so an accidental tiny resize doesn't trap the
+        // user with a narrow bar on every reload. Default (~880px) is
+        // restored if the saved width was too small.
         if (sz) {
-          if (typeof sz.width === "number") {
-            const w = Math.max(320, Math.min(window.innerWidth - 16, sz.width));
+          if (typeof sz.width === "number" && sz.width >= 600) {
+            const w = Math.max(600, Math.min(window.innerWidth - 16, sz.width));
             root.style.setProperty("--lt-bar-width", `${w}px`);
           }
           if (typeof sz.captionsHeight === "number") {
