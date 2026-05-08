@@ -157,6 +157,9 @@
      rule. Without overriding, the parent stays wide regardless of
      how small we make the segments. */
   .lt-strip .lt-mode { width: auto; padding: 1px; }
+  /* At narrow widths, kill the spacer's grow so items pack
+     together instead of leaving a big empty middle. */
+  .lt-spacer { flex-grow: 0; }
   .lt-ticker .lt-ticker-time,
   .lt-ticker .lt-ticker-sep { display: none; }
   .lt-wordmark { display: none; }
