@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SaySame Live Interpreter",
   "description": "Live translate any video with translated voice or cheap text mode.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
@@ -60,6 +60,35 @@
     }
   ],
   "content_scripts": [
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://youtube.com/*",
+        "https://*.xiaohongshu.com/*",
+        "https://xiaohongshu.com/*",
+        "https://*.xhslink.com/*",
+        "https://*.bilibili.com/*",
+        "https://bilibili.com/*",
+        "https://*.douyin.com/*",
+        "https://douyin.com/*",
+        "https://*.tiktok.com/*",
+        "https://tiktok.com/*",
+        "https://*.twitter.com/*",
+        "https://twitter.com/*",
+        "https://*.x.com/*",
+        "https://x.com/*",
+        "https://*.vimeo.com/*",
+        "https://vimeo.com/*",
+        "https://*.twitch.tv/*",
+        "https://twitch.tv/*",
+        "https://*.weibo.com/*",
+        "https://weibo.com/*"
+      ],
+      "js": ["page-hijack.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": false
+    },
     {
       "matches": [
         "https://*.youtube.com/*",
