@@ -80,6 +80,14 @@
 
   function deactivate() {
     if (hijackedVideo) {
+      // Before removing the descriptor, sync the engine value to
+      // displayedVolume so YouTube's audio actually plays at the
+      // user's perceived level once the hijack is gone (otherwise
+      // the engine stays pinned at 1.0 and the user's video
+      // suddenly blasts at full volume).
+      if (protoDesc && Number.isFinite(displayedVolume)) {
+        try { protoDesc.set.call(hijackedVideo, displayedVolume); } catch {}
+      }
       try { delete hijackedVideo.volume; } catch {}
     }
     hijackedVideo = null;

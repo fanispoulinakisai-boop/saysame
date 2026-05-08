@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.3.2"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.3.3"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -477,16 +477,17 @@
       dest,
       capturedStream: dest.stream
     };
-    // Lock down video.volume so external sliders (YouTube's
-    // native one) can't attenuate the capture path. See big
-    // comment block above the hijack helpers.
-    installVolumeHijack(video);
+    // NOTE: hijack install is NOT here. The audio pipeline persists
+    // across Stop/Start (see stopPageTranslation comment), but the
+    // hijack must NOT — otherwise it stays active in the idle bar
+    // state and intercepts YouTube's slider while no session runs.
+    // Hijack lifecycle is now driven by session start/stop in the
+    // session handlers + stopPageTranslation / stopTextModeTranslation.
     return audioPipeline;
   }
 
   function tearDownAudioPipeline() {
     if (!audioPipeline) return;
-    removeVolumeHijack(audioPipeline.video);
     try { audioPipeline.source.disconnect(); } catch {}
     try { audioPipeline.playbackGain.disconnect(); } catch {}
     try { audioPipeline.captureGain.disconnect(); } catch {}
@@ -864,6 +865,10 @@
     // and the user gets stuck on "Listening..." forever. The pipeline
     // (and its stream) live across Stop/Start until the page video
     // element changes or we navigate away.
+    // Remove the page-world video.volume hijack so YouTube's slider
+    // works normally in the idle bar state. Hijack will be re-installed
+    // on the next Start.
+    if (audioPipeline?.video) removeVolumeHijack(audioPipeline.video);
     closeSession(session, { stopStream: false });
     isStreaming = false;
     previousFinalizedTarget = "";
@@ -915,6 +920,9 @@
         errorMessage: error?.message || null
       });
     }
+    // Remove the page-world video.volume hijack so YouTube's slider
+    // works normally in the idle bar state.
+    if (audioPipeline?.video) removeVolumeHijack(audioPipeline.video);
     // Do NOT stop session.stream tracks — same reason as stopPageTranslation:
     // the stream is owned by the Web Audio pipeline and must survive
     // Stop so that a subsequent Start can reuse it. Stopping the tracks
@@ -969,6 +977,10 @@
     if (!video) throw new Error("No video element was found on this page.");
     const stream = await capturedVideoStream(video);
     applyAudioMix(sessionSettings, { remote: false });
+    // Activate the page-world video.volume hijack now that we have
+    // a real session under way (text mode). Removed in
+    // stopTextModeTranslation so it doesn't survive into the idle bar.
+    installVolumeHijack(video);
 
     // Mark session up-front so a quick double-Start can't open two
     // peer connections.
@@ -1102,6 +1114,11 @@
           ? previousSession.stream
           : await capturedVideoStream(video);
       applyAudioMix(sessionSettings, { remote: false });
+      // Activate the page-world video.volume hijack now that we have
+      // a real session under way. Removed in stopPageTranslation so
+      // it doesn't survive into the idle bar (which would make
+      // YouTube's slider behave oddly when no session is running).
+      installVolumeHijack(video);
       startSourceCaptionPolling();
 
       const pc = new RTCPeerConnection();
