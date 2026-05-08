@@ -1131,6 +1131,8 @@
         <span class="lt-resize-handle lt-resize-handle-w" data-lt-resize="w" aria-hidden="true"></span>
         <span class="lt-resize-handle lt-resize-handle-e" data-lt-resize="e" aria-hidden="true"></span>
         <span class="lt-resize-handle lt-resize-handle-s" data-lt-resize="s" aria-hidden="true"></span>
+        <span class="lt-resize-handle lt-resize-handle-sw" data-lt-resize="sw" aria-hidden="true"></span>
+        <span class="lt-resize-handle lt-resize-handle-se" data-lt-resize="se" aria-hidden="true"></span>
         <div class="lt-settings" data-lt-settings>
           <div class="lt-settings-header">
             <span class="lt-settings-title">Settings</span>
@@ -1176,6 +1178,13 @@
                 <button class="lt-preset" type="button" data-lt-preset="40">40%</button>
               </div>
             </div>
+          </div>
+
+          <div class="lt-settings-section">
+            <label class="lt-switch">
+              <input type="checkbox" data-lt-show-captions checked />
+              <span>Show captions in voice mode</span>
+            </label>
           </div>
 
           <div class="lt-settings-section">
@@ -1329,6 +1338,7 @@
       opacitySlider: root.querySelector("[data-lt-opacity]"),
       opacityValue: root.querySelector("[data-lt-opacity-value]"),
       presetBtns: root.querySelectorAll("[data-lt-preset]"),
+      showCaptionsToggle: root.querySelector("[data-lt-show-captions]"),
       originalVolumeSlider: root.querySelector("[data-lt-original-volume]"),
       originalVolumeValueLabel: root.querySelector("[data-lt-original-volume-value]"),
       translationVolumeSlider: root.querySelector("[data-lt-translation-volume]"),
@@ -1714,6 +1724,15 @@
       });
     });
 
+    // Settings: show-captions toggle (voice mode only — text mode
+    // always shows captions because they're the whole point of it)
+    elements.showCaptionsToggle.addEventListener("change", () => {
+      const showCaptions = elements.showCaptionsToggle.checked;
+      currentState = { ...currentState, showCaptions };
+      applyShowCaptionsClass();
+      try { void chrome.storage.local.set({ showCaptions }); } catch {}
+    });
+
     // Settings: volume sliders (original video / translated voice)
     elements.originalVolumeSlider.addEventListener("input", () => {
       const v = Math.max(0, Math.min(100, Number(elements.originalVolumeSlider.value) || 0));
@@ -1817,17 +1836,21 @@
       });
       handle.addEventListener("pointermove", (event) => {
         if (!resizeState || event.pointerId !== resizeState.pointerId) return;
-        if (resizeState.mode === "e") {
-          const dx = event.clientX - resizeState.startX;
+        const dx = event.clientX - resizeState.startX;
+        const dy = event.clientY - resizeState.startY;
+        const mode = resizeState.mode;
+        // Width changes (sides + corners). Bar is centered, so each
+        // pixel of pointer travel changes width by 2 (both sides shift).
+        if (mode === "e" || mode === "se") {
           const w = Math.max(320, Math.min(window.innerWidth - 16, resizeState.originWidth + dx * 2));
           root.style.setProperty("--lt-bar-width", `${w}px`);
-        } else if (resizeState.mode === "w") {
-          const dx = event.clientX - resizeState.startX;
+        } else if (mode === "w" || mode === "sw") {
           const w = Math.max(320, Math.min(window.innerWidth - 16, resizeState.originWidth - dx * 2));
           root.style.setProperty("--lt-bar-width", `${w}px`);
-        } else if (resizeState.mode === "s") {
-          const dy = event.clientY - resizeState.startY;
-          const h = Math.max(60, Math.min(window.innerHeight * 0.5, resizeState.originCaptionsHeight + dy));
+        }
+        // Captions height changes (bottom edge + bottom corners).
+        if (mode === "s" || mode === "sw" || mode === "se") {
+          const h = Math.max(40, Math.min(window.innerHeight * 0.6, resizeState.originCaptionsHeight + dy));
           root.style.setProperty("--lt-captions-min-height", `${h}px`);
         }
       });
@@ -1877,6 +1900,7 @@
     // Voice picker is irrelevant in text mode — gray it out so users
     // don't think their voice choice is doing anything.
     elements.voiceWrap?.classList.toggle("is-disabled", mode === "text");
+    applyShowCaptionsClass();
     if (elements.defaultMode) elements.defaultMode.value = mode;
   }
 
@@ -1893,6 +1917,16 @@
     const fraction = barOpacity / 100;
     root.style.setProperty("--lt-bar-opacity", String(fraction));
     root.classList.toggle("is-translucent", barOpacity < 100);
+  }
+
+  // Toggle .is-captions-off when user has unchecked "Show captions in
+  // voice mode" AND we're in voice mode. Text mode always shows
+  // captions regardless.
+  function applyShowCaptionsClass() {
+    if (!root) return;
+    const showCaptions = currentState.showCaptions !== false;
+    const captionsOff = !showCaptions && mode === "voice";
+    root.classList.toggle("is-captions-off", captionsOff);
   }
 
   function showTooltip(anchor, text) {
@@ -2054,6 +2088,9 @@
     elements.originalVolumeValueLabel.textContent = String(ov);
     elements.translationVolumeSlider.value = String(tv);
     elements.translationVolumeValueLabel.textContent = String(tv);
+    const showCaptions = currentState.showCaptions !== false;
+    elements.showCaptionsToggle.checked = showCaptions;
+    applyShowCaptionsClass();
     elements.mode.dataset.mode = mode;
     elements.modeSegments.forEach((s) => {
       s.setAttribute("aria-selected", String(s.dataset.segment === mode));
