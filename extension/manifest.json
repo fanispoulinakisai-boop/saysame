@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SaySame Live Interpreter",
   "description": "Live translate any video with translated voice or cheap text mode.",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [

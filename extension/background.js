@@ -502,6 +502,14 @@ function buildTranslationSessionConfig(settings = {}) {
   return {
     model: settings.translationModel || DEFAULT_SETTINGS.translationModel,
     audio: {
+      // Server-side noise reduction. The Mac app sends this; SaySame
+      // didn't, so our messy WebRTC/Opus-encoded stream reached the
+      // model with no cleanup. "near_field" is tuned for close-mic /
+      // clean-source audio (matches typical YouTube/Bilibili content).
+      // Documented in OpenAI's gpt-realtime-translate cookbook.
+      input: {
+        noise_reduction: { type: "near_field" }
+      },
       output: {
         language: targetLanguage
       }

@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.4.2"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.4.3"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -484,6 +484,16 @@
     if (audioPipeline?.video === video) return audioPipeline;
     if (audioPipeline) tearDownAudioPipeline();
 
+    // NOTE: we considered pinning AudioContext to 24 kHz to match
+    // OpenAI's expected rate for gpt-realtime-translate, skipping a
+    // server-side resample step. Reverted after independent review:
+    // the v0.3.x page-world hijack routes user-facing playback
+    // through ctx.destination too, so a 24 kHz context would
+    // hard-cut everything above 12 kHz Nyquist for the user (dull
+    // music, lost sibilants). Translation may have benefited; the
+    // playback regression was a definite cost vs an unverified gain.
+    // Default rate keeps playback fidelity intact; OpenAI handles
+    // the resample on its side either way.
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     let source;
     try {
@@ -720,6 +730,23 @@
     if (pipeline.ctx.state === "suspended") {
       try { await pipeline.ctx.resume(); } catch {}
     }
+    // Best-effort: ask the captured track to disable AGC/NS/EC. Per
+    // W3C MediaCapture spec these constraints are getUserMedia-only,
+    // so on a MediaStreamDestination track this typically resolves
+    // as a no-op — but it costs nothing and protects us if Chromium
+    // ever extends support to Web Audio sources. The real heavy
+    // lifting is done by `noise_reduction: near_field` server-side
+    // (see background.js buildTranslationSessionConfig).
+    pipeline.capturedStream.getAudioTracks().forEach((track) => {
+      try {
+        track.applyConstraints({
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1
+        }).catch(() => {});
+      } catch {}
+    });
     return pipeline.capturedStream;
   }
 
