@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.3.4"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.4.0"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -847,8 +847,57 @@
     }
   }
 
+  // Build a .txt transcript (source + target) and trigger a browser
+  // download. No-op unless `currentState.autoSaveTranscript` is true.
+  // Called at the very TOP of both stop handlers so the source/target
+  // text variables haven't been cleared yet.
+  function saveTranscriptIfEnabled(modeOverride, targetLangOverride) {
+    if (!currentState?.autoSaveTranscript) return;
+    const sourceText = (currentSourceText || "").trim();
+    const targetText = (currentTargetText || "").trim();
+    if (!sourceText && !targetText) return; // nothing captured
+    try {
+      const m = modeOverride || activeTranslationMode || currentState.translationMode || "voice";
+      const targetLang = targetLangOverride || activeTargetLanguage || currentState.targetLanguage || "unknown";
+      const rawTitle = (document.title || "video").replace(/[\\\/:*?"<>|]/g, "").trim();
+      const safeTitle = rawTitle.slice(0, 80) || "video";
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const ts = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}-${pad(now.getMinutes())}`;
+      const filename = `SaySame – ${safeTitle} – ${ts}.txt`;
+      const lines = [
+        "SaySame transcript",
+        `Video: ${document.title || "Untitled"}`,
+        `Saved: ${now.toISOString()}`,
+        `Mode: ${m === "text" ? "Text" : "Voice"}`,
+        `Target language: ${targetLang}`,
+        "",
+        "=== ORIGINAL ===",
+        sourceText || "(no source captured)",
+        "",
+        "=== TRANSLATION ===",
+        targetText || "(no translation captured)",
+        ""
+      ];
+      const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 1500);
+    } catch (e) {
+      // Saving the transcript must never break Stop — swallow.
+      try { console.warn("[SaySame] transcript save failed:", e); } catch {}
+    }
+  }
+
   async function stopPageTranslation(reason = "user_stop", shouldRender = false) {
     trace("content.session.stop", { reason });
+    saveTranscriptIfEnabled();
     pageToken += 1;
     const session = pageSession;
     pageSession = undefined;
@@ -905,6 +954,7 @@
   // ===========================================================
   async function stopTextModeTranslation(reason = "user_stop", shouldRender = false) {
     trace("text_mode.session.stop", { reason });
+    saveTranscriptIfEnabled("text", textSession?.settings?.targetLanguage);
     const session = textSession;
     textSession = undefined;
     sessionStartedAt = 0;
@@ -1507,6 +1557,10 @@
               <input type="checkbox" data-lt-show-captions checked />
               <span>Show captions in voice mode</span>
             </label>
+            <label class="lt-switch">
+              <input type="checkbox" data-lt-auto-save-transcript />
+              <span>Auto-save transcript when session ends (.txt to Downloads)</span>
+            </label>
           </div>
 
           <div class="lt-settings-section">
@@ -1664,6 +1718,7 @@
       opacityValue: root.querySelector("[data-lt-opacity-value]"),
       presetBtns: root.querySelectorAll("[data-lt-preset]"),
       showCaptionsToggle: root.querySelector("[data-lt-show-captions]"),
+      autoSaveTranscriptToggle: root.querySelector("[data-lt-auto-save-transcript]"),
       originalVolumeSlider: root.querySelector("[data-lt-original-volume]"),
       originalVolumeValueLabel: root.querySelector("[data-lt-original-volume-value]"),
       translationVolumeSlider: root.querySelector("[data-lt-translation-volume]"),
@@ -2072,6 +2127,20 @@
       setShowCaptions(currentState.showCaptions === false);
     });
 
+    // Settings: auto-save transcript toggle. Off by default. When on,
+    // a .txt of source + target gets generated and downloaded each
+    // time a session ends. See saveTranscriptIfEnabled().
+    const setAutoSaveTranscript = (autoSaveTranscript) => {
+      currentState = { ...currentState, autoSaveTranscript };
+      if (elements.autoSaveTranscriptToggle) {
+        elements.autoSaveTranscriptToggle.checked = autoSaveTranscript;
+      }
+      try { void chrome.storage.local.set({ autoSaveTranscript }); } catch {}
+    };
+    elements.autoSaveTranscriptToggle?.addEventListener("change", () => {
+      setAutoSaveTranscript(elements.autoSaveTranscriptToggle.checked);
+    });
+
     // Settings: volume sliders (original video / translated voice)
     elements.originalVolumeSlider.addEventListener("input", () => {
       const v = Math.max(0, Math.min(100, Number(elements.originalVolumeSlider.value) || 0));
@@ -2478,6 +2547,9 @@
     const showCaptions = currentState.showCaptions !== false;
     elements.showCaptionsToggle.checked = showCaptions;
     applyShowCaptionsClass();
+    if (elements.autoSaveTranscriptToggle) {
+      elements.autoSaveTranscriptToggle.checked = !!currentState.autoSaveTranscript;
+    }
     elements.mode.dataset.mode = mode;
     elements.modeSegments.forEach((s) => {
       s.setAttribute("aria-selected", String(s.dataset.segment === mode));

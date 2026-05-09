@@ -17,6 +17,10 @@ const DEFAULT_SETTINGS = {
   originalVolume: 18,
   translationVolume: 100,
   showSource: false,
+  // When true, on Stop the bar generates a .txt of source + target
+  // transcript and triggers a browser download to Downloads. Off by
+  // default — opt-in via the settings panel toggle.
+  autoSaveTranscript: false,
   // Pipeline: "voice" (realtime audio) or "text" (captions only).
   mode: "voice"
 };
