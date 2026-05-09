@@ -2,7 +2,7 @@
 
 **Last updated:** 2026-05-08
 **Maintained by:** Fanis Poulinakis (publisher)
-**Contact:** fanispoulinakisai@gmail.com
+**Contact:** fanis@futurevideomedia.com
 
 SaySame is a Chrome extension that translates the audio of videos in real time using OpenAI's Realtime API. We've designed it to keep your data on your own device wherever possible. This page explains exactly what is and isn't handled.
 
@@ -69,6 +69,6 @@ If anything material changes (new third parties, new data collection, etc.) we w
 
 ## Contact
 
-Questions about this policy or about how SaySame handles your data? Email: **fanispoulinakisai@gmail.com**
+Questions about this policy or about how SaySame handles your data? Email: **fanis@futurevideomedia.com**
 
 You can also open an issue on the public GitHub repo: [github.com/fanispoulinakisai-boop/saysame](https://github.com/fanispoulinakisai-boop/saysame)
