@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.4.0"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.4.1"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -129,6 +129,14 @@
   let currentTargetText = "";
   let previousFinalizedTarget = "";
   let currentSourceText = "";
+  // Full-session transcript accumulators. `currentSourceText` /
+  // `currentTargetText` are CURRENT-LINE buffers (each new event
+  // REPLACES them), so they can't power a "save the whole transcript"
+  // file. These arrays append each finalized line as it comes in.
+  // Reset at end of saveTranscriptIfEnabled (post-Stop), preserved
+  // across language-switch handovers within a session.
+  let transcriptSourceLines = [];
+  let transcriptTargetLines = [];
   let activeTargetLanguage;
   let activeTranslationVoice;
   let activeTranslationMode;
@@ -289,6 +297,11 @@
     if (!captionText || captionText === lastCaptionText) return;
     lastCaptionText = captionText;
     currentSourceText = captionText;
+    // Voice mode source text comes from polling the page's native
+    // captions (e.g. YouTube's CC) since gpt-realtime-translate
+    // doesn't expose source transcripts. Append to the full-session
+    // transcript so Save Transcript captures the original audio side.
+    appendTranscriptSource(captionText);
     trace("source_caption.update", { reason, chars: captionText.length });
     if (pageSession && root && !root.hidden) notifyLive("Live Translator");
   }
@@ -356,6 +369,9 @@
     ) {
       previousFinalizedTarget = currentTargetText;
       currentTargetText = event.transcript;
+      // A finalized translated line just arrived — append to the
+      // full-session transcript for Save Transcript.
+      appendTranscriptTarget(event.transcript);
       isStreaming = false;
       notifyLive("Live Translator");
       return;
@@ -376,6 +392,11 @@
 
     if (event.type === "session.input_transcript.done" && event.transcript) {
       currentSourceText = event.transcript;
+      // If OpenAI ever exposes input transcription on the translate
+      // endpoint, this catches the finalized source line. Today it's
+      // a defensive append — the event doesn't currently fire because
+      // we don't configure input_audio_transcription in the session.
+      appendTranscriptSource(event.transcript);
       notifyLive("Live Translator");
       return;
     }
@@ -847,15 +868,41 @@
     }
   }
 
-  // Build a .txt transcript (source + target) and trigger a browser
-  // download. No-op unless `currentState.autoSaveTranscript` is true.
-  // Called at the very TOP of both stop handlers so the source/target
-  // text variables haven't been cleared yet.
+  // Append a finalized source-language line to the transcript
+  // accumulator. Trims, skips empties, and dedups against the
+  // immediately-preceding entry (events sometimes re-fire identical
+  // text on completion).
+  function appendTranscriptSource(line) {
+    const t = String(line || "").trim();
+    if (!t) return;
+    if (transcriptSourceLines[transcriptSourceLines.length - 1] === t) return;
+    transcriptSourceLines.push(t);
+  }
+  function appendTranscriptTarget(line) {
+    const t = String(line || "").trim();
+    if (!t) return;
+    if (transcriptTargetLines[transcriptTargetLines.length - 1] === t) return;
+    transcriptTargetLines.push(t);
+  }
+
+  // Build a .txt transcript (full-session source + target) and trigger
+  // a browser download. No-op unless `currentState.autoSaveTranscript`
+  // is true. Called at the very TOP of both stop handlers, BEFORE the
+  // accumulators are cleared. After save, accumulators are reset so
+  // the next Start begins with an empty transcript.
   function saveTranscriptIfEnabled(modeOverride, targetLangOverride) {
-    if (!currentState?.autoSaveTranscript) return;
-    const sourceText = (currentSourceText || "").trim();
-    const targetText = (currentTargetText || "").trim();
-    if (!sourceText && !targetText) return; // nothing captured
+    if (!currentState?.autoSaveTranscript) {
+      transcriptSourceLines = [];
+      transcriptTargetLines = [];
+      return;
+    }
+    const sourceText = transcriptSourceLines.join("\n").trim();
+    const targetText = transcriptTargetLines.join("\n").trim();
+    if (!sourceText && !targetText) {
+      transcriptSourceLines = [];
+      transcriptTargetLines = [];
+      return; // nothing captured
+    }
     try {
       const m = modeOverride || activeTranslationMode || currentState.translationMode || "voice";
       const targetLang = targetLangOverride || activeTargetLanguage || currentState.targetLanguage || "unknown";
@@ -893,6 +940,10 @@
       // Saving the transcript must never break Stop — swallow.
       try { console.warn("[SaySame] transcript save failed:", e); } catch {}
     }
+    // Reset for the next session. Done outside try/catch so a save
+    // failure still leaves clean state on the next Start.
+    transcriptSourceLines = [];
+    transcriptTargetLines = [];
   }
 
   async function stopPageTranslation(reason = "user_stop", shouldRender = false) {
@@ -1053,6 +1104,9 @@
         onFinalSource: (text) => {
           if (!textSession) return;
           currentSourceText = text;
+          // Text mode source comes from gpt-realtime-whisper. Append
+          // each finalized segment to the full-session transcript.
+          appendTranscriptSource(text);
           notifyLive("Live Translator (text)");
         },
         onPartialTarget: (text) => {
@@ -1065,6 +1119,9 @@
           if (!textSession) return;
           if (currentTargetText) previousFinalizedTarget = currentTargetText;
           currentTargetText = text;
+          // Text mode target comes from gpt-4o-mini per finalized
+          // segment. Append to the full-session transcript.
+          appendTranscriptTarget(text);
           isStreaming = false;
           notifyLive("Live Translator (text)");
         },
