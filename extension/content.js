@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.4.3"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.4.4"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -442,6 +442,122 @@
     ) {
       isStreaming = false;
       notifyLive("Live Translator");
+    }
+  }
+
+  // Snapshot the live, unhijacked engine volume and write it through
+  // SaySame's state + slider UI. Called at session start so the first
+  // applyAudioMix() uses the value the user is ACTUALLY hearing right
+  // now, not whatever the bidirectional sync last persisted (which
+  // can race the start click on YouTube). Without this, perceived
+  // original volume jumps at session start. Returns the 0–100 value
+  // we just stored so the caller can patch their sessionSettings copy.
+  function snapshotOriginalVolumeFromVideo(video) {
+    if (!video) return null;
+    const desc = findVolumeProtoDescriptor(video);
+    let raw = 1.0;
+    if (desc?.get) {
+      try { raw = Number(desc.get.call(video)); } catch {}
+    }
+    if (!Number.isFinite(raw)) raw = 1.0;
+    // YouTube's mute toggle preserves volume but sets muted=true.
+    // Treat that as 0 so applyAudioMix gates correctly.
+    const effective = video.muted ? 0 : Math.max(0, Math.min(1, raw));
+    const value0to100 = Math.round(effective * 100);
+    currentState = { ...currentState, originalVolume: value0to100 };
+    if (root && elements?.originalVolumeSlider) {
+      elements.originalVolumeSlider.value = String(value0to100);
+      if (elements.originalVolumeValueLabel) {
+        elements.originalVolumeValueLabel.textContent = String(value0to100);
+      }
+    }
+    try { void chrome.storage.local.set({ originalVolume: value0to100 }); } catch {}
+    return value0to100;
+  }
+
+  // Munge the local offer SDP so Chromium's Opus encoder runs without
+  // DTX (discontinuous transmission) and at constant 128kbps bitrate.
+  // Why: DTX silences "quiet" frames during pauses/quiet music and
+  // takes 100–300ms to re-engage on speech onset → eats the first
+  // phoneme of each sentence. VBR ramps the bitrate down on quiet
+  // content → audio quality degrades exactly when the model needs
+  // the most info. Both compound for non-officially-supported output
+  // languages like Greek (where the model has less quality margin).
+  // Comparison Mac app sends raw PCM and has no Greek degradation
+  // issue — confirms the Opus encoder is the bottleneck for SaySame.
+  // Defensive: any error returns the SDP unchanged so we never break
+  // a session over a regex edge case.
+  function transformOfferSdp(sdp) {
+    try {
+      if (typeof sdp !== "string" || !sdp.length) return sdp;
+      // SDP lines use CRLF per RFC 4566; preserve whatever line
+      // ending the source uses.
+      const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+      const lines = sdp.split(eol);
+
+      // Find every Opus payload type ID in the audio m= section.
+      // Chromium can ship multiple (e.g. 111 + 63 for stereo/RED).
+      let inAudio = false;
+      const opusPts = [];
+      for (const line of lines) {
+        if (line.startsWith("m=")) inAudio = line.startsWith("m=audio");
+        if (!inAudio) continue;
+        const m = line.match(/^a=rtpmap:(\d+)\s+opus\/48000\/2/i);
+        if (m) opusPts.push(m[1]);
+      }
+      if (!opusPts.length) return sdp;
+
+      const desired = "minptime=10;useinbandfec=1;usedtx=0;cbr=1;maxaveragebitrate=128000;stereo=0;sprop-stereo=0";
+      const desiredKeys = new Set(
+        desired.split(";").map((kv) => kv.split("=")[0].trim().toLowerCase())
+      );
+
+      const out = [];
+      inAudio = false;
+      const fmtpSeen = new Set();
+      for (const line of lines) {
+        if (line.startsWith("m=")) inAudio = line.startsWith("m=audio");
+        if (inAudio) {
+          const fm = line.match(/^a=fmtp:(\d+)\s+(.*)$/i);
+          if (fm && opusPts.includes(fm[1])) {
+            // Merge: keep params we don't override (don't clobber
+            // useinbandfec etc.), then prepend our desired set.
+            const existing = fm[2]
+              .split(";")
+              .map((kv) => kv.trim())
+              .filter(Boolean)
+              .filter((kv) => !desiredKeys.has(kv.split("=")[0].trim().toLowerCase()));
+            const merged = [desired, ...existing].join(";");
+            out.push(`a=fmtp:${fm[1]} ${merged}`);
+            fmtpSeen.add(fm[1]);
+            continue;
+          }
+        }
+        out.push(line);
+      }
+
+      // Insert a fmtp line right after the rtpmap line for any Opus
+      // PT that didn't have one. Otherwise our params would be lost.
+      if (fmtpSeen.size < opusPts.length) {
+        const out2 = [];
+        inAudio = false;
+        for (const line of out) {
+          if (line.startsWith("m=")) inAudio = line.startsWith("m=audio");
+          out2.push(line);
+          if (inAudio) {
+            const rm = line.match(/^a=rtpmap:(\d+)\s+opus\/48000\/2/i);
+            if (rm && opusPts.includes(rm[1]) && !fmtpSeen.has(rm[1])) {
+              out2.push(`a=fmtp:${rm[1]} ${desired}`);
+              fmtpSeen.add(rm[1]);
+            }
+          }
+        }
+        return out2.join(eol);
+      }
+      return out.join(eol);
+    } catch (e) {
+      try { trace("sdp.munge_error", { errorMessage: String(e?.message || e) }); } catch {}
+      return sdp;
     }
   }
 
@@ -1141,11 +1257,29 @@
     const video = document.querySelector("video");
     if (!video) throw new Error("No video element was found on this page.");
     const stream = await capturedVideoStream(video);
-    applyAudioMix(sessionSettings, { remote: false });
+    // Preserve the user's current perceived original volume across
+    // session start (otherwise applyAudioMix uses stored state which
+    // may not reflect the live YouTube slider).
+    const ovSnapshot = snapshotOriginalVolumeFromVideo(video);
+    applyAudioMix(
+      { ...sessionSettings, originalVolume: ovSnapshot ?? sessionSettings.originalVolume },
+      { remote: false }
+    );
     // Activate the page-world video.volume hijack now that we have
     // a real session under way (text mode). Removed in
     // stopTextModeTranslation so it doesn't survive into the idle bar.
     installVolumeHijack(video);
+    // Tell the page-world hijack what the user's perceived volume is
+    // RIGHT NOW. Otherwise it inherits 1.0 (engine pinned by applyAudioMix
+    // moments earlier) and YouTube's native slider would visually pop to
+    // 100% until the user moved a slider.
+    if (ovSnapshot != null) {
+      try {
+        document.dispatchEvent(new CustomEvent("saysame:hijack-set-displayed", {
+          detail: { value: ovSnapshot / 100 }
+        }));
+      } catch {}
+    }
 
     // Mark session up-front so a quick double-Start can't open two
     // peer connections.
@@ -1284,12 +1418,34 @@
         isHandover && previousSession?.stream?.active
           ? previousSession.stream
           : await capturedVideoStream(video);
-      applyAudioMix(sessionSettings, { remote: false });
+      // Preserve perceived original volume across session start
+      // (only on a fresh start — handover keeps the running pipeline's
+      // current gain). Without this the user hears a sudden jump when
+      // they click Start because the bidirectional sync between
+      // YouTube's slider and SaySame's stored state can race.
+      const ovSnapshot = !isHandover ? snapshotOriginalVolumeFromVideo(video) : null;
+      applyAudioMix(
+        ovSnapshot != null
+          ? { ...sessionSettings, originalVolume: ovSnapshot }
+          : sessionSettings,
+        { remote: false }
+      );
       // Activate the page-world video.volume hijack now that we have
       // a real session under way. Removed in stopPageTranslation so
       // it doesn't survive into the idle bar (which would make
       // YouTube's slider behave oddly when no session is running).
       installVolumeHijack(video);
+      // Tell the page-world hijack what the user's perceived volume is
+      // RIGHT NOW. Otherwise it inherits 1.0 (engine pinned by
+      // applyAudioMix moments earlier) and YouTube's native slider
+      // would visually pop to 100% until the user moved a slider.
+      if (ovSnapshot != null) {
+        try {
+          document.dispatchEvent(new CustomEvent("saysame:hijack-set-displayed", {
+            detail: { value: ovSnapshot / 100 }
+          }));
+        } catch {}
+      }
       startSourceCaptionPolling();
 
       const pc = new RTCPeerConnection();
@@ -1368,11 +1524,17 @@
       });
 
       const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      // Munge the offer SDP to disable Opus DTX and force CBR 128kbps
+      // for the upstream audio. See transformOfferSdp() comment for
+      // the why; in short — cleaner audio to the model, especially
+      // for non-officially-supported output languages like Greek.
+      const mungedSdp = transformOfferSdp(offer.sdp);
+      await pc.setLocalDescription({ type: offer.type, sdp: mungedSdp });
       await waitForIceGatheringComplete(pc);
       trace("sdp.offer_ready", {
         token,
-        sdpChars: pc.localDescription?.sdp?.length || 0
+        sdpChars: pc.localDescription?.sdp?.length || 0,
+        sdpMungeApplied: mungedSdp !== offer.sdp
       });
 
       const response = await sendRuntimeMessage({
@@ -1388,6 +1550,26 @@
         type: "answer",
         sdp: response.answerSdp
       });
+      // Belt-and-braces: even if Chromium ignored our SDP fmtp params,
+      // setParameters lets us force the bitrate cap directly on the
+      // sender. Must run AFTER setRemoteDescription — getParameters()
+      // returns hollow encodings until the negotiation completes.
+      try {
+        for (const sender of pc.getSenders()) {
+          if (sender.track?.kind !== "audio") continue;
+          const params = sender.getParameters();
+          if (!params.encodings || !params.encodings.length) {
+            params.encodings = [{}];
+          }
+          params.encodings[0].maxBitrate = 128000;
+          params.encodings[0].priority = "high";
+          params.encodings[0].networkPriority = "high";
+          await sender.setParameters(params);
+          trace("sender.params_applied", { token, maxBitrate: 128000 });
+        }
+      } catch (e) {
+        trace("sender.params_error", { token, errorMessage: String(e?.message || e) });
+      }
       if (isHandover) {
         currentTargetText = "";
         currentSourceText = "";
