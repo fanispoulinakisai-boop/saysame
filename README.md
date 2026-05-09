@@ -11,7 +11,7 @@ Built for people who watch videos in languages they don't speak: language learne
 ## What it does
 
 - **Voice mode** (~$0.034/min) — hear the translated speech alongside the original video.
-- **Text mode** (~$0.02/min, ~3× cheaper) — see translated captions only, no voice generated.
+- **Text mode** (~$0.02/min, ~40% cheaper) — see translated captions only, no voice generated.
 - **Works on:** YouTube, Bilibili, Xiaohongshu (小红书), Douyin (抖音), Weibo, TikTok, Twitter/X, Vimeo, Twitch.
 - **Live cost ticker** so you know what each session is costing you.
 - **Resizable, draggable, transparent bar** so it doesn't get in the way of what you're watching.
@@ -35,9 +35,9 @@ Built for people who watch videos in languages they don't speak: language learne
 5. Select the `extension` folder.
 6. Click the SaySame icon in your toolbar to open the bar.
 
-### Option B — Chrome Web Store (coming soon)
+### Option B — Chrome Web Store
 
-We'll list this on the Chrome Web Store once review is complete.
+Submitted and awaiting review. The listing link will go here once Google approves it. (First-time submissions with broad host permissions take 1–2 weeks.)
 
 ## How to use
 
@@ -67,6 +67,8 @@ The bar shows a live `MM:SS · $X.XX` ticker so you always know what the current
 - It's never sent to any server other than OpenAI's API endpoints.
 - It's never sent to the page (YouTube/Bilibili/etc.).
 - For maximum safety, create a dedicated OpenAI project key with a low monthly cap, just for this extension.
+
+Full privacy policy: [PRIVACY.md](PRIVACY.md).
 
 ## Advanced — local bridge mode
 
