@@ -14,6 +14,7 @@ Built for people who watch videos in languages they don't speak: language learne
 - **Text mode** (~$0.02/min, ~40% cheaper) — see translated captions only, no voice generated.
 - **Works on:** YouTube, Bilibili, Xiaohongshu (小红书), Douyin (抖音), Weibo, TikTok, Twitter/X, Vimeo, Twitch.
 - **Live cost ticker** so you know what each session is costing you.
+- **Save transcript** — when you hit Stop, the full session (original captions + translation) is auto-downloaded as a `.txt` to your Downloads folder. Toggle on/off in settings. *(Source text in voice mode is read from YouTube's CC track — make sure CC is enabled if you want it.)*
 - **Resizable, draggable, transparent bar** so it doesn't get in the way of what you're watching.
 - **Language switcher mid-session** — flip between English, Greek, Spanish, etc., without losing your session.
 - **Show/hide captions toggle** in voice mode.
