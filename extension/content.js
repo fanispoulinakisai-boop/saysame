@@ -6,7 +6,7 @@
   // Page-world-visible build stamp so we can verify which content
   // script version is actually loaded on a tab. Read with:
   //   document.documentElement.dataset.saysameBuild
-  try { document.documentElement.dataset.saysameBuild = "0.4.1"; } catch {}
+  try { document.documentElement.dataset.saysameBuild = "0.4.2"; } catch {}
 
   // ===========================================================
   // Constants — copied from popup.js / previous content.js
@@ -343,6 +343,24 @@
       errorCode: event.error?.code || null,
       errorMessage: event.error?.message || null
     });
+
+    // Diagnostic: record what realtime event types are firing so we
+    // can verify from page-world whether `.done` events ever arrive
+    // (which is what triggers transcript-array appends in voice mode).
+    // Tracks the latest event type and a small counter per type, all
+    // in a single dataset attribute for cheap inspection.
+    try {
+      if (!window.__saysameEventTally) window.__saysameEventTally = {};
+      const t = event.type || "unknown";
+      window.__saysameEventTally[t] = (window.__saysameEventTally[t] || 0) + 1;
+      const summary = Object.entries(window.__saysameEventTally)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 8)
+        .map(([k, v]) => `${k}:${v}`)
+        .join("|");
+      document.documentElement.dataset.saysameEvents = summary;
+      document.documentElement.dataset.saysameLastEvent = t;
+    } catch {}
 
     if (event.type === "error") {
       notifyLive("Translation unavailable");
@@ -891,6 +909,25 @@
   // accumulators are cleared. After save, accumulators are reset so
   // the next Start begins with an empty transcript.
   function saveTranscriptIfEnabled(modeOverride, targetLangOverride) {
+    // Defensive flush: if a session ended mid-utterance, the current
+    // line (e.g. partial deltas being accumulated) was never finalized
+    // by a `.done` event and so was never pushed to the arrays. Push
+    // whatever's in the current-line buffers now so the user doesn't
+    // lose the last sentence they were translating. Dedup against the
+    // last array entry handles cases where the .done event DID fire.
+    if (currentTargetText && currentTargetText.trim()) {
+      appendTranscriptTarget(currentTargetText);
+    }
+    if (currentSourceText && currentSourceText.trim()) {
+      appendTranscriptSource(currentSourceText);
+    }
+    // Diagnostic: write the captured-line counts to the DOM so we can
+    // verify from page-world whether anything was captured at all,
+    // without needing to spend OpenAI credits on a full debug session.
+    try {
+      document.documentElement.dataset.saysameTranscriptCount =
+        `s=${transcriptSourceLines.length},t=${transcriptTargetLines.length}`;
+    } catch {}
     if (!currentState?.autoSaveTranscript) {
       transcriptSourceLines = [];
       transcriptTargetLines = [];
